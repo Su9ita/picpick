@@ -3,101 +3,156 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PicPick</title>
+  <title>PicPick 設定</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>PicPick</h1>
-      <p id="site-info" class="site-info">--</p>
+      <div class="header-row">
+        <h1>PicPick 設定</h1>
+        <label class="overlay-toggle" title="オーバーレイの表示/非表示">
+          <input type="checkbox" id="overlay-enabled" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </header>
 
     <main>
-      <!-- スキャン結果 -->
-      <section id="scan-section" class="section">
-        <button id="scan-btn" class="btn btn-primary">
-          画像をスキャン
+      <!-- タブナビゲーション -->
+      <nav class="settings-tabs">
+        <button class="tab-btn active" data-tab="global-settings">
+          グローバル設定
         </button>
-        <div id="scan-result" class="result hidden">
-          <p><span id="image-count">0</span> 枚の画像</p>
-          <p class="filtered-info">
-            (フィルター除外: <span id="filtered-count">0</span> 枚)
-          </p>
+        <button class="tab-btn" data-tab="template-manager">
+          テンプレート管理
+        </button>
+        <button class="tab-btn" data-tab="preset-manager">
+          プリセット管理
+        </button>
+        <button class="tab-btn" data-tab="rule-editor">
+          サイトルール管理
+        </button>
+      </nav>
+
+      <!-- グローバル設定タブ -->
+      <section id="global-settings" class="tab-content active">
+        <div class="setting-item">
+          <label for="filename-template">ファイル名テンプレート</label>
+          <input type="text" id="filename-template"
+                 value="{date}_{title}_{index}"
+                 placeholder="{date}_{title}_{index}">
+          <small id="template-variables-help">変数: {date}, {title}, {creator}, {index}, {postId}, {year}, {month}, {day}, {original}</small>
         </div>
-        <p id="error-msg" class="error hidden"></p>
+
+        <div class="setting-item">
+          <label for="download-folder">保存フォルダ名</label>
+          <input type="text" id="download-folder" value="PicPick" placeholder="PicPick">
+        </div>
+
+        <div class="button-row">
+          <button id="save-global-settings" class="btn btn-secondary">
+            設定を保存
+          </button>
+        </div>
       </section>
 
-      <!-- ダウンロード -->
-      <section id="download-section" class="section hidden">
-        <div class="creator-select-row">
-          <label for="creator-select">クリエイター:</label>
-          <select id="creator-select">
-            <option value="">-- 選択しない --</option>
-          </select>
+      <!-- テンプレート管理タブ -->
+      <section id="template-manager" class="tab-content">
+        <div class="setting-item">
+          <label>登録済みテンプレート</label>
+          <div id="custom-template-list" class="item-list"></div>
         </div>
-        <button id="download-btn" class="btn btn-success">
-          一括ダウンロード
-        </button>
-        <div id="progress" class="progress hidden">
-          <div class="progress-bar">
-            <div id="progress-fill" class="progress-fill"></div>
-          </div>
-          <p id="progress-text">0 / 0</p>
+
+        <div class="setting-item">
+          <label for="new-template">新規テンプレート</label>
+          <input type="text" id="new-template" placeholder="テンプレート名またはパターン">
+          <button id="add-custom-template" class="btn btn-small">追加</button>
         </div>
-        <p id="download-result" class="result-text hidden"></p>
       </section>
 
-      <!-- 設定 -->
-      <section class="section settings">
-        <details>
-          <summary>設定</summary>
-          <div class="settings-content">
-            <div class="setting-item">
-              <label for="filename-template">ファイル名テンプレート</label>
-              <input type="text" id="filename-template"
-                     value="{date}_{title}_{index}"
-                     placeholder="{date}_{title}_{index}">
-              <small>変数: {date}, {title}, {creator}, {index}, {postId}, {year}, {month}, {day}, {original}</small>
-            </div>
+      <!-- プリセット管理タブ -->
+      <section id="preset-manager" class="tab-content">
+        <div class="setting-item">
+          <label>登録済みプリセット</label>
+          <div id="size-preset-list" class="item-list"></div>
+        </div>
 
-            <div class="setting-row">
-              <div class="setting-item">
-                <label for="min-width">最小幅 (px)</label>
-                <input type="number" id="min-width" value="400" min="0">
-              </div>
-              <div class="setting-item">
-                <label for="min-height">最小高さ (px)</label>
-                <input type="number" id="min-height" value="400" min="0">
-              </div>
-            </div>
-
-            <div class="setting-item">
-              <label for="download-folder">保存フォルダ名</label>
-              <input type="text" id="download-folder" value="PicPick" placeholder="PicPick">
-            </div>
-
-            <!-- クリエイターリスト -->
-            <div class="setting-item">
-              <label>クリエイターリスト</label>
-              <small>ダウンロード時に選択できるクリエイター名を登録</small>
-              <div id="creator-list" class="creator-list"></div>
-              <div class="creator-input-row">
-                <input type="text" id="new-creator" placeholder="クリエイター名" class="input-flex">
-                <button id="add-creator" class="btn btn-small">追加</button>
-              </div>
-            </div>
-
-            <div class="button-row">
-              <button id="save-settings" class="btn btn-secondary">
-                設定を保存
-              </button>
-              <button id="reset-settings" class="btn btn-danger">
-                リセット
-              </button>
-            </div>
+        <div class="setting-item">
+          <label>新規プリセット</label>
+          <div class="preset-input-group">
+            <input type="text" id="new-preset-name" placeholder="プリセット名" class="input-medium">
+            <input type="number" id="new-preset-width" placeholder="幅(px)" min="0" class="input-small">
+            <input type="number" id="new-preset-height" placeholder="高さ(px)" min="0" class="input-small">
+            <button id="add-size-preset" class="btn btn-small">追加</button>
           </div>
-        </details>
+        </div>
+      </section>
+
+      <!-- サイトルール管理タブ -->
+      <section id="rule-editor" class="tab-content">
+        <!-- Patreon ルール -->
+        <div class="setting-item rule-section">
+          <label style="font-weight: 600; color: #2563eb;">Patreon ルール</label>
+
+          <div style="margin-top: 8px;">
+            <small style="font-weight: 500;">テンプレート</small>
+            <div id="patreon-templates-list" class="item-list"></div>
+            <input type="text" id="patreon-new-template" placeholder="テンプレート名" class="input-medium" style="margin-bottom: 4px;">
+            <button id="patreon-add-template" class="btn btn-small">追加</button>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <small style="font-weight: 500;">プリセット</small>
+            <div id="patreon-presets-list" class="item-list"></div>
+            <input type="text" id="patreon-new-preset-name" placeholder="プリセット名" class="input-medium" style="margin-bottom: 4px;">
+            <input type="number" id="patreon-new-preset-width" placeholder="幅(px)" min="0" class="input-small">
+            <input type="number" id="patreon-new-preset-height" placeholder="高さ(px)" min="0" class="input-small">
+            <button id="patreon-add-preset" class="btn btn-small">追加</button>
+          </div>
+        </div>
+
+        <!-- Pixiv Fanbox ルール -->
+        <div class="setting-item rule-section">
+          <label style="font-weight: 600; color: #2563eb;">Pixiv Fanbox ルール</label>
+
+          <div style="margin-top: 8px;">
+            <small style="font-weight: 500;">テンプレート</small>
+            <div id="fanbox-templates-list" class="item-list"></div>
+            <input type="text" id="fanbox-new-template" placeholder="テンプレート名" class="input-medium" style="margin-bottom: 4px;">
+            <button id="fanbox-add-template" class="btn btn-small">追加</button>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <small style="font-weight: 500;">プリセット</small>
+            <div id="fanbox-presets-list" class="item-list"></div>
+            <input type="text" id="fanbox-new-preset-name" placeholder="プリセット名" class="input-medium" style="margin-bottom: 4px;">
+            <input type="number" id="fanbox-new-preset-width" placeholder="幅(px)" min="0" class="input-small">
+            <input type="number" id="fanbox-new-preset-height" placeholder="高さ(px)" min="0" class="input-small">
+            <button id="fanbox-add-preset" class="btn btn-small">追加</button>
+          </div>
+        </div>
+
+        <!-- 汎用ルール -->
+        <div class="setting-item rule-section">
+          <label style="font-weight: 600; color: #2563eb;">汎用ルール</label>
+
+          <div style="margin-top: 8px;">
+            <small style="font-weight: 500;">テンプレート</small>
+            <div id="generic-templates-list" class="item-list"></div>
+            <input type="text" id="generic-new-template" placeholder="テンプレート名" class="input-medium" style="margin-bottom: 4px;">
+            <button id="generic-add-template" class="btn btn-small">追加</button>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <small style="font-weight: 500;">プリセット</small>
+            <div id="generic-presets-list" class="item-list"></div>
+            <input type="text" id="generic-new-preset-name" placeholder="プリセット名" class="input-medium" style="margin-bottom: 4px;">
+            <input type="number" id="generic-new-preset-width" placeholder="幅(px)" min="0" class="input-small">
+            <input type="number" id="generic-new-preset-height" placeholder="高さ(px)" min="0" class="input-small">
+            <button id="generic-add-preset" class="btn btn-small">追加</button>
+          </div>
+        </div>
       </section>
     </main>
 

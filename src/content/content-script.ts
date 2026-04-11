@@ -25,7 +25,7 @@ async function extractAndFilter(): Promise<{
   images?: ImageInfo[];
   filteredCount?: number;
   siteInfo?: {
-    site: 'patreon' | 'pixiv' | 'fanbox' | 'unknown';
+    site: 'patreon' | 'pixiv' | 'fanbox' | 'x' | 'generic' | 'unknown';
     creator: string;
     postTitle: string;
   };

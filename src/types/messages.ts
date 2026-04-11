@@ -17,6 +17,7 @@ export interface DownloadImagesMessage {
   type: 'DOWNLOAD_IMAGES';
   images: ImageInfo[];
   settings: Settings;
+  customName?: string;  // カスタム名モード時のファイル名
 }
 
 export interface GetSettingsMessage {

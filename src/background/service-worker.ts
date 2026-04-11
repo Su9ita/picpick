@@ -1,6 +1,6 @@
 import { DownloadImagesMessage } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
-import { generateFilename } from '../utils/filename-template';
+import { generateFilename, generateBasePrefix, generateCustomFilename, generateCustomBasePrefix, findNextIndex } from '../utils/filename-template';
 
 // メッセージリスナー
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -38,14 +38,29 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
   failed: number;
   errors: string[];
 }> {
-  const { images, settings } = message;
+  const { images, settings, customName } = message;
   let success = 0;
   let failed = 0;
   const errors: string[] = [];
 
   for (let i = 0; i < images.length; i++) {
     const image = images[i];
-    const filename = generateFilename(settings.filenameTemplate, image, i + 1);
+
+    let basePrefix: string;
+    let filename: string;
+
+    // カスタム名モードとテンプレートモードで分岐
+    if (settings.namingMode === 'custom' && customName) {
+      // カスタム名モード: {date}_{customName}_{index}.{ext}
+      basePrefix = generateCustomBasePrefix(customName, image);
+      const nextIndex = await findNextIndex(basePrefix, settings.downloadFolder);
+      filename = generateCustomFilename(customName, image, nextIndex);
+    } else {
+      // テンプレートモード: 従来の処理
+      basePrefix = generateBasePrefix(settings.filenameTemplate, image);
+      const nextIndex = await findNextIndex(basePrefix, settings.downloadFolder);
+      filename = generateFilename(settings.filenameTemplate, image, nextIndex);
+    }
 
     try {
       const downloadPath = settings.downloadFolder
