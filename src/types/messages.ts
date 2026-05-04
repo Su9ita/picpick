@@ -6,6 +6,7 @@ export type MessageType =
   | 'DOWNLOAD_IMAGES'
   | 'GET_SETTINGS'
   | 'SAVE_SETTINGS'
+  | 'RESET_SETTINGS'
   | 'EXTRACTION_RESULT'
   | 'DOWNLOAD_PROGRESS';
 
@@ -27,6 +28,10 @@ export interface GetSettingsMessage {
 export interface SaveSettingsMessage {
   type: 'SAVE_SETTINGS';
   settings: Settings;
+}
+
+export interface ResetSettingsMessage {
+  type: 'RESET_SETTINGS';
 }
 
 export interface ExtractionResultMessage {
@@ -51,5 +56,6 @@ export type Message =
   | DownloadImagesMessage
   | GetSettingsMessage
   | SaveSettingsMessage
+  | ResetSettingsMessage
   | ExtractionResultMessage
   | DownloadProgressMessage;

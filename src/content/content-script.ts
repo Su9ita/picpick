@@ -4,12 +4,17 @@ import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
 import { initOverlay } from './overlay';
+import { initXInlineSave } from './x-inline-save';
 
 // ページ読み込み完了後にオーバーレイを初期化
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initOverlay);
+  document.addEventListener('DOMContentLoaded', () => {
+    initOverlay();
+    initXInlineSave();
+  });
 } else {
   initOverlay();
+  initXInlineSave();
 }
 
 // メッセージリスナー（ポップアップからの呼び出し用）

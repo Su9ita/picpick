@@ -730,7 +730,12 @@ function formatDate(date, format) {
 }
 function extractExtension(url) {
     try {
-        const pathname = new URL(url).pathname;
+        const urlObj = new URL(url);
+        const format = urlObj.searchParams.get('format');
+        if (urlObj.hostname === 'pbs.twimg.com' && format) {
+            return format.toLowerCase();
+        }
+        const pathname = urlObj.pathname;
         const match = pathname.match(/\.([^.?]+)(?:\?|$)/);
         return match ? match[1].toLowerCase() : 'jpg';
     }

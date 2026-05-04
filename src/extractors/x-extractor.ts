@@ -79,13 +79,17 @@ export class XExtractor extends BaseExtractor {
 
   private isLikelyIcon(img: HTMLImageElement): boolean {
     const rect = img.getBoundingClientRect();
+    const url = img.src.toLowerCase();
+    if (url.includes('pbs.twimg.com/media')) {
+      return false;
+    }
+
     // 小さい画像はアイコンの可能性が高い
     if (rect.width < 100 && rect.height < 100) {
       return true;
     }
 
     // プロフィール画像のURLパターンを除外
-    const url = img.src.toLowerCase();
     if (
       url.includes('profile_images') ||
       url.includes('default_profile') ||
