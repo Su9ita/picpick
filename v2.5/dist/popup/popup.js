@@ -2,7 +2,7 @@
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 472
+/***/ 268
 (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 // ESM COMPAT FLAG
@@ -482,13 +482,31 @@ const DEFAULT_SIZE_PRESETS = [
     { name: '5K (5120px)', minWidth: 5120, minHeight: 2880 },
     { name: '8K (7680px)', minWidth: 7680, minHeight: 4320 },
 ];
+const DEFAULT_RULE_FILENAME_PRESETS = {
+    generic: [
+        { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+    patreon: [
+        { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+    pixiv_fanbox: [
+        { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+    x: [
+        { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+};
 // デフォルトサイトルールをインポート（循環参照を避けるため遅延インポート）
 let defaultSiteRulesInitialized = false;
 let cachedDefaultSiteRules = [];
 function getDefaultSiteRules() {
     if (!defaultSiteRulesInitialized) {
         try {
-            const { DEFAULT_SITE_RULES } = __webpack_require__(472);
+            const { DEFAULT_SITE_RULES } = __webpack_require__(268);
             cachedDefaultSiteRules = DEFAULT_SITE_RULES;
             defaultSiteRulesInitialized = true;
         }
@@ -506,7 +524,7 @@ const DEFAULT_SETTINGS = {
     minWidth: 400,
     minHeight: 400,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-    downloadFolder: 'PicPick',
+    downloadFolder: 'picpick',
     scanScrollEnabled: false,
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
@@ -522,21 +540,25 @@ const DEFAULT_SETTINGS = {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'manual',
         },
         'patreon': {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'default',
         },
         'pixiv_fanbox': {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'default',
         },
         'x': {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'default',
         },
     },
     // サイトルール関連
@@ -556,433 +578,428 @@ const DEFAULT_SETTINGS = {
         'pixiv_fanbox': [],
         'x': [],
     },
+    ruleFilenamePresets: DEFAULT_RULE_FILENAME_PRESETS,
 };
+
+;// ./src/utils/settings-normalizer.ts
+/* unused harmony import specifier */ var settings_normalizer_DEFAULT_SETTINGS;
+
+const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+function cloneFilenamePresets(source) {
+    return Object.fromEntries(Object.entries(source).map(([ruleId, presets]) => [
+        ruleId,
+        presets.map((preset) => ({ ...preset })),
+    ]));
+}
+function makePresetId(prefix, value, index) {
+    return `${prefix}-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset'}`;
+}
+function legacyNameToTemplate(value) {
+    return value.includes('{') ? value : `{date}_${value}_{index}`;
+}
+function addUniquePreset(presets, preset) {
+    if (presets.some((existing) => existing.id === preset.id || existing.template === preset.template)) {
+        return;
+    }
+    presets.push(preset);
+}
+function mergeSizePresets(saved) {
+    const existing = Array.isArray(saved) ? saved : [];
+    const existingNames = new Set(existing.map((preset) => preset.name));
+    return [
+        ...existing,
+        ...DEFAULT_SIZE_PRESETS.filter((preset) => !existingNames.has(preset.name)),
+    ];
+}
+function normalizeSettings(input) {
+    const saved = input || {};
+    const ruleFilenamePresets = cloneFilenamePresets(DEFAULT_RULE_FILENAME_PRESETS);
+    if (saved.ruleFilenamePresets) {
+        for (const [ruleId, presets] of Object.entries(saved.ruleFilenamePresets)) {
+            if (!ruleFilenamePresets[ruleId]) {
+                ruleFilenamePresets[ruleId] = [];
+            }
+            for (const preset of presets || []) {
+                if (!preset?.label || !preset?.template)
+                    continue;
+                addUniquePreset(ruleFilenamePresets[ruleId], { ...preset });
+            }
+        }
+    }
+    for (const ruleId of RULE_IDS) {
+        if (!ruleFilenamePresets[ruleId]) {
+            ruleFilenamePresets[ruleId] = [];
+        }
+        const legacyRuleTemplates = saved.ruleSpecificTemplates?.[ruleId] || [];
+        legacyRuleTemplates.forEach((value, index) => {
+            addUniquePreset(ruleFilenamePresets[ruleId], {
+                id: makePresetId('legacy-rule', value, index),
+                label: value,
+                template: legacyNameToTemplate(value),
+            });
+        });
+        const legacyGlobalTemplates = saved.customNameTemplates || [];
+        legacyGlobalTemplates.forEach((value, index) => {
+            addUniquePreset(ruleFilenamePresets[ruleId], {
+                id: makePresetId('legacy-global', value, index),
+                label: value,
+                template: legacyNameToTemplate(value),
+            });
+        });
+    }
+    const settings = {
+        ...DEFAULT_SETTINGS,
+        ...saved,
+        sizePresets: mergeSizePresets(saved.sizePresets),
+        customNameTemplates: saved.customNameTemplates || [],
+        ruleSessionSettings: {
+            ...DEFAULT_SETTINGS.ruleSessionSettings,
+            ...(saved.ruleSessionSettings || {}),
+        },
+        ruleSpecificTemplates: {
+            ...DEFAULT_SETTINGS.ruleSpecificTemplates,
+            ...(saved.ruleSpecificTemplates || {}),
+        },
+        ruleSpecificPresets: {
+            ...DEFAULT_SETTINGS.ruleSpecificPresets,
+            ...(saved.ruleSpecificPresets || {}),
+        },
+        ruleFilenamePresets,
+    };
+    for (const ruleId of RULE_IDS) {
+        const session = settings.ruleSessionSettings?.[ruleId];
+        if (session && !session.selectedFilenamePresetId) {
+            session.selectedFilenamePresetId = session.namingMode === 'template' ? 'default' : 'manual';
+        }
+    }
+    return settings;
+}
+function getRuleFilenamePresets(settings, ruleId) {
+    return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];
+}
+function getSelectedFilenamePreset(settings, ruleId) {
+    const presets = getRuleFilenamePresets(settings, ruleId);
+    const selectedId = settings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId;
+    return presets.find((preset) => preset.id === selectedId) || presets[0] || {
+        id: 'fallback',
+        label: '標準',
+        template: settings.filenameTemplate || settings_normalizer_DEFAULT_SETTINGS.filenameTemplate,
+    };
+}
 
 ;// ./src/popup/popup.ts
 
-let currentSettings = { ...DEFAULT_SETTINGS };
-// ルールIDの定義
-const RULE_IDS = (/* unused pure expression or super */ null && (['patreon', 'pixiv_fanbox', 'generic']));
-// HTML IDとルールIDのマッピング
-const HTML_TO_RULE_ID = {
-    'patreon': 'patreon',
-    'fanbox': 'pixiv_fanbox',
-    'generic': 'generic',
-};
-// DOM要素
-const filenameTemplateInput = document.getElementById('filename-template');
+
+let currentSettings = normalizeSettings(DEFAULT_SETTINGS);
+const tabButtons = document.querySelectorAll('.tab-btn');
+const tabContents = document.querySelectorAll('.tab-content');
+const activeRuleSelect = document.getElementById('active-rule');
+const ruleDescription = document.getElementById('rule-description');
+const ruleVariables = document.getElementById('rule-variables');
+const filenamePresetList = document.getElementById('filename-preset-list');
+const newFilenamePresetLabel = document.getElementById('new-filename-preset-label');
+const newFilenamePresetTemplate = document.getElementById('new-filename-preset-template');
+const addFilenamePresetBtn = document.getElementById('add-filename-preset');
 const downloadFolderInput = document.getElementById('download-folder');
 const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled');
 const saveGlobalSettingsBtn = document.getElementById('save-global-settings');
-const popup_status = document.getElementById('status');
 const overlayEnabledCheckbox = document.getElementById('overlay-enabled');
-// タブナビゲーション要素
-const tabButtons = document.querySelectorAll('.tab-btn');
-const tabContents = document.querySelectorAll('.tab-content');
-// グローバルテンプレート/プリセット要素
-const customTemplateList = document.getElementById('custom-template-list');
-const newTemplateInput = document.getElementById('new-template');
-const addCustomTemplateBtn = document.getElementById('add-custom-template');
 const sizePresetList = document.getElementById('size-preset-list');
 const newPresetNameInput = document.getElementById('new-preset-name');
 const newPresetWidthInput = document.getElementById('new-preset-width');
 const newPresetHeightInput = document.getElementById('new-preset-height');
 const addSizePresetBtn = document.getElementById('add-size-preset');
-// 初期化
+const popup_status = document.getElementById('status');
 document.addEventListener('DOMContentLoaded', async () => {
     await loadSettings();
     initTabNavigation();
-    initGlobalTemplateManagement();
-    initGlobalPresetManagement();
-    initRuleManagement();
-    initOverlayToggle();
+    initRuleEditor();
+    initGlobalSettings();
+    initSizePresetManagement();
 });
-// タブナビゲーション初期化
-function initTabNavigation() {
-    tabButtons.forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const tabName = btn.getAttribute('data-tab');
-            if (tabName) {
-                switchTab(tabName);
-            }
-        });
-    });
+function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[c] || c));
 }
-// タブを切り替え
-function switchTab(tabName) {
-    tabButtons.forEach((btn) => btn.classList.remove('active'));
-    tabContents.forEach((content) => content.classList.remove('active'));
-    const activeBtn = document.querySelector(`[data-tab="${tabName}"]`);
-    if (activeBtn)
-        activeBtn.classList.add('active');
-    const activeContent = document.getElementById(tabName);
-    if (activeContent)
-        activeContent.classList.add('active');
+function popup_makePresetId(label) {
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset';
+    return `user-${Date.now()}-${slug}`;
 }
-// 設定を読み込み
+function getActiveRuleId() {
+    return activeRuleSelect?.value || currentSettings.activeRuleId || 'generic';
+}
+function getActiveRule() {
+    const ruleId = getActiveRuleId();
+    return currentSettings.siteRules?.find((rule) => rule.siteId === ruleId);
+}
 async function loadSettings() {
     return new Promise((resolve) => {
         chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
-            if (response && !response.error) {
-                const savedPresets = response.sizePresets || [];
-                const savedPresetNames = new Set(savedPresets.map((p) => p.name));
-                const newPresets = DEFAULT_SIZE_PRESETS.filter((p) => !savedPresetNames.has(p.name));
-                const mergedPresets = [...savedPresets, ...newPresets];
-                currentSettings = {
-                    ...DEFAULT_SETTINGS,
-                    ...response,
-                    sizePresets: mergedPresets,
-                    customNameTemplates: response.customNameTemplates || [],
-                    ruleSpecificTemplates: response.ruleSpecificTemplates || {
-                        'generic': [],
-                        'patreon': [],
-                        'pixiv_fanbox': [],
-                    },
-                    ruleSpecificPresets: response.ruleSpecificPresets || {
-                        'generic': [],
-                        'patreon': [],
-                        'pixiv_fanbox': [],
-                    },
-                };
-                filenameTemplateInput.value = currentSettings.filenameTemplate;
-                downloadFolderInput.value = currentSettings.downloadFolder;
-                if (scanScrollEnabledCheckbox) {
-                    scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
-                }
-                // オーバーレイトグルの状態を設定
-                if (overlayEnabledCheckbox) {
-                    overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
-                }
-                renderGlobalTemplateList();
-                renderGlobalPresetList();
-                renderAllRuleLists();
-            }
+            currentSettings = normalizeSettings(response && !response.error ? response : DEFAULT_SETTINGS);
+            renderAll();
             resolve();
         });
     });
 }
-function escapeHtml(str) {
-    return str.replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c] || c));
+function renderAll() {
+    renderRuleSelect();
+    renderRuleDetails();
+    renderGlobalSettings();
+    renderSizePresetList();
 }
-// ========================================
-// グローバルテンプレート管理
-// ========================================
-function initGlobalTemplateManagement() {
-    if (addCustomTemplateBtn) {
-        addCustomTemplateBtn.addEventListener('click', addGlobalTemplate);
-    }
-    if (newTemplateInput) {
-        newTemplateInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter')
-                addGlobalTemplate();
-        });
-    }
-}
-function renderGlobalTemplateList() {
-    if (!customTemplateList)
-        return;
-    customTemplateList.innerHTML = '';
-    const templates = currentSettings.customNameTemplates || [];
-    if (templates.length === 0) {
-        customTemplateList.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-        return;
-    }
-    for (let i = 0; i < templates.length; i++) {
-        const name = templates[i];
-        const item = document.createElement('div');
-        item.className = 'template-item';
-        item.innerHTML = `<span class="name">${escapeHtml(name)}</span><button class="delete-btn" data-index="${i}">×</button>`;
-        customTemplateList.appendChild(item);
-    }
-    customTemplateList.querySelectorAll('.delete-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-            const index = parseInt(e.target.getAttribute('data-index') || '0');
-            deleteGlobalTemplate(index);
+function initTabNavigation() {
+    tabButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tabName = btn.getAttribute('data-tab');
+            if (!tabName)
+                return;
+            tabButtons.forEach((button) => button.classList.remove('active'));
+            tabContents.forEach((content) => content.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(tabName)?.classList.add('active');
         });
     });
 }
-function addGlobalTemplate() {
-    if (!newTemplateInput)
-        return;
-    const name = newTemplateInput.value.trim();
-    if (!name || currentSettings.customNameTemplates.includes(name))
-        return;
-    currentSettings.customNameTemplates.push(name);
-    newTemplateInput.value = '';
-    renderGlobalTemplateList();
-    saveSettings();
+function initRuleEditor() {
+    activeRuleSelect?.addEventListener('change', async () => {
+        currentSettings.activeRuleId = getActiveRuleId();
+        ensureRuleSession(getActiveRuleId());
+        renderRuleDetails();
+        await saveSettings();
+    });
+    addFilenamePresetBtn?.addEventListener('click', addFilenamePreset);
+    newFilenamePresetTemplate?.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter')
+            addFilenamePreset();
+    });
 }
-function deleteGlobalTemplate(index) {
-    currentSettings.customNameTemplates.splice(index, 1);
-    renderGlobalTemplateList();
-    saveSettings();
-}
-// ========================================
-// グローバルプリセット管理
-// ========================================
-function initGlobalPresetManagement() {
-    if (addSizePresetBtn) {
-        addSizePresetBtn.addEventListener('click', addGlobalPreset);
+function renderRuleSelect() {
+    if (!activeRuleSelect)
+        return;
+    activeRuleSelect.innerHTML = '';
+    for (const rule of currentSettings.siteRules || []) {
+        const option = document.createElement('option');
+        option.value = rule.siteId;
+        option.textContent = rule.label.replace(/ ルール$/, '');
+        activeRuleSelect.appendChild(option);
     }
-    if (newPresetNameInput) {
-        newPresetNameInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter')
-                addGlobalPreset();
+    activeRuleSelect.value = currentSettings.activeRuleId || 'generic';
+}
+function renderRuleDetails() {
+    renderRuleVariables();
+    renderFilenamePresetList();
+}
+function renderRuleVariables() {
+    const rule = getActiveRule();
+    if (!ruleVariables || !rule)
+        return;
+    if (ruleDescription) {
+        ruleDescription.textContent = rule.description;
+    }
+    const variables = [...rule.availableVariables.map((variable) => variable.name), 'custom'];
+    ruleVariables.innerHTML = variables
+        .map((name) => `<button type="button" class="variable-chip" data-variable="${escapeHtml(name)}">{${escapeHtml(name)}}</button>`)
+        .join('');
+    ruleVariables.querySelectorAll('.variable-chip').forEach((button) => {
+        button.addEventListener('click', () => {
+            const variable = button.dataset.variable || '';
+            insertAtCursor(newFilenamePresetTemplate, `{${variable}}`);
         });
+    });
+}
+function renderFilenamePresetList() {
+    if (!filenamePresetList)
+        return;
+    const ruleId = getActiveRuleId();
+    const presets = getRuleFilenamePresets(currentSettings, ruleId);
+    const selectedId = currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id;
+    if (presets.length === 0) {
+        filenamePresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
+        return;
+    }
+    filenamePresetList.innerHTML = presets.map((preset, index) => `
+    <div class="item-entry filename-preset-entry">
+      <label class="radio-row">
+        <input type="radio" name="filename-preset" value="${escapeHtml(preset.id)}" ${preset.id === selectedId ? 'checked' : ''}>
+        <span class="name">${escapeHtml(preset.label)}</span>
+      </label>
+      <code>${escapeHtml(preset.template)}</code>
+      <button class="delete-btn" data-index="${index}" ${preset.id === 'default' || preset.id === 'manual' ? 'disabled' : ''}>×</button>
+    </div>
+  `).join('');
+    filenamePresetList.querySelectorAll('input[name="filename-preset"]').forEach((radio) => {
+        radio.addEventListener('change', async () => {
+            ensureRuleSession(ruleId);
+            currentSettings.ruleSessionSettings[ruleId].selectedFilenamePresetId = radio.value;
+            currentSettings.namingMode = getRuleFilenamePresets(currentSettings, ruleId)
+                .find((preset) => preset.id === radio.value)?.template.includes('{custom}')
+                ? 'custom'
+                : 'template';
+            await saveSettings();
+        });
+    });
+    filenamePresetList.querySelectorAll('.delete-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            const index = parseInt(button.dataset.index || '-1', 10);
+            deleteFilenamePreset(index);
+        });
+    });
+}
+function addFilenamePreset() {
+    const ruleId = getActiveRuleId();
+    const label = newFilenamePresetLabel.value.trim();
+    const template = newFilenamePresetTemplate.value.trim();
+    if (!label || !template)
+        return;
+    if (!currentSettings.ruleFilenamePresets)
+        currentSettings.ruleFilenamePresets = {};
+    if (!currentSettings.ruleFilenamePresets[ruleId])
+        currentSettings.ruleFilenamePresets[ruleId] = [];
+    const preset = {
+        id: popup_makePresetId(label),
+        label,
+        template,
+    };
+    currentSettings.ruleFilenamePresets[ruleId].push(preset);
+    ensureRuleSession(ruleId);
+    currentSettings.ruleSessionSettings[ruleId].selectedFilenamePresetId = preset.id;
+    currentSettings.namingMode = template.includes('{custom}') ? 'custom' : 'template';
+    newFilenamePresetLabel.value = '';
+    newFilenamePresetTemplate.value = '';
+    renderFilenamePresetList();
+    saveSettings();
+}
+function deleteFilenamePreset(index) {
+    const ruleId = getActiveRuleId();
+    const presets = currentSettings.ruleFilenamePresets?.[ruleId];
+    if (!presets || index < 0)
+        return;
+    const preset = presets[index];
+    if (!preset || preset.id === 'default' || preset.id === 'manual')
+        return;
+    presets.splice(index, 1);
+    ensureRuleSession(ruleId);
+    currentSettings.ruleSessionSettings[ruleId].selectedFilenamePresetId = presets[0]?.id || 'default';
+    renderFilenamePresetList();
+    saveSettings();
+}
+function insertAtCursor(input, text) {
+    if (!input)
+        return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.value = input.value.slice(0, start) + text + input.value.slice(end);
+    input.focus();
+    input.setSelectionRange(start + text.length, start + text.length);
+}
+function ensureRuleSession(ruleId) {
+    if (!currentSettings.ruleSessionSettings)
+        currentSettings.ruleSessionSettings = {};
+    if (!currentSettings.ruleSessionSettings[ruleId]) {
+        currentSettings.ruleSessionSettings[ruleId] = {
+            customName: '',
+            selectedPreset: currentSettings.selectedPreset || '',
+            namingMode: 'template',
+            selectedFilenamePresetId: getRuleFilenamePresets(currentSettings, ruleId)[0]?.id || 'default',
+        };
     }
 }
-function renderGlobalPresetList() {
+function initGlobalSettings() {
+    saveGlobalSettingsBtn?.addEventListener('click', async () => {
+        currentSettings.downloadFolder = downloadFolderInput.value || DEFAULT_SETTINGS.downloadFolder;
+        currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
+        await saveSettings();
+        showStatus('設定を保存しました');
+    });
+    overlayEnabledCheckbox?.addEventListener('change', async () => {
+        currentSettings.overlayEnabled = overlayEnabledCheckbox.checked;
+        await saveSettings();
+        chrome.tabs.query({}, (tabs) => {
+            for (const tab of tabs) {
+                if (!tab.id)
+                    continue;
+                chrome.tabs.sendMessage(tab.id, {
+                    type: 'TOGGLE_OVERLAY',
+                    enabled: currentSettings.overlayEnabled,
+                }).catch(() => { });
+            }
+        });
+    });
+}
+function renderGlobalSettings() {
+    if (downloadFolderInput)
+        downloadFolderInput.value = currentSettings.downloadFolder;
+    if (scanScrollEnabledCheckbox)
+        scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
+    if (overlayEnabledCheckbox)
+        overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
+}
+function initSizePresetManagement() {
+    addSizePresetBtn?.addEventListener('click', addSizePreset);
+    newPresetNameInput?.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter')
+            addSizePreset();
+    });
+}
+function renderSizePresetList() {
     if (!sizePresetList)
         return;
-    sizePresetList.innerHTML = '';
     const presets = currentSettings.sizePresets || [];
     if (presets.length === 0) {
-        sizePresetList.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
+        sizePresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
         return;
     }
-    for (let i = 0; i < presets.length; i++) {
-        const preset = presets[i];
-        const item = document.createElement('div');
-        item.className = 'preset-item';
-        item.innerHTML = `
+    sizePresetList.innerHTML = presets.map((preset, index) => `
+    <div class="preset-item">
       <span class="preset-name">${escapeHtml(preset.name)}</span>
       <span class="preset-size">${preset.minWidth}×${preset.minHeight}px</span>
-      <button class="delete-btn" data-index="${i}">×</button>
-    `;
-        sizePresetList.appendChild(item);
-    }
-    sizePresetList.querySelectorAll('.delete-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-            const index = parseInt(e.target.getAttribute('data-index') || '0');
-            deleteGlobalPreset(index);
+      <button class="delete-btn" data-index="${index}">×</button>
+    </div>
+  `).join('');
+    sizePresetList.querySelectorAll('.delete-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            const index = parseInt(button.dataset.index || '-1', 10);
+            if (index < 0)
+                return;
+            currentSettings.sizePresets.splice(index, 1);
+            renderSizePresetList();
+            saveSettings();
         });
     });
 }
-function addGlobalPreset() {
-    if (!newPresetNameInput || !newPresetWidthInput || !newPresetHeightInput)
-        return;
+function addSizePreset() {
     const name = newPresetNameInput.value.trim();
-    const minWidth = parseInt(newPresetWidthInput.value) || 0;
-    const minHeight = parseInt(newPresetHeightInput.value) || 0;
-    if (!name || currentSettings.sizePresets.some(p => p.name === name))
+    const minWidth = parseInt(newPresetWidthInput.value, 10) || 0;
+    const minHeight = parseInt(newPresetHeightInput.value, 10) || 0;
+    if (!name || currentSettings.sizePresets.some((preset) => preset.name === name))
         return;
-    currentSettings.sizePresets.push({ name, minWidth, minHeight });
+    const preset = { name, minWidth, minHeight };
+    currentSettings.sizePresets.push(preset);
     newPresetNameInput.value = '';
     newPresetWidthInput.value = '';
     newPresetHeightInput.value = '';
-    renderGlobalPresetList();
+    renderSizePresetList();
     saveSettings();
 }
-function deleteGlobalPreset(index) {
-    currentSettings.sizePresets.splice(index, 1);
-    renderGlobalPresetList();
-    saveSettings();
-}
-// ========================================
-// ルール別テンプレート/プリセット管理
-// ========================================
-function renderRuleTemplateList(htmlPrefix) {
-    const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-    const listDiv = document.getElementById(`${htmlPrefix}-templates-list`);
-    if (!listDiv || !ruleId)
-        return;
-    const templates = currentSettings.ruleSpecificTemplates?.[ruleId] || [];
-    listDiv.innerHTML = '';
-    if (templates.length === 0) {
-        listDiv.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-        return;
-    }
-    for (let i = 0; i < templates.length; i++) {
-        const name = templates[i];
-        const item = document.createElement('div');
-        item.className = 'template-item';
-        item.innerHTML = `<span class="name">${escapeHtml(name)}</span><button class="delete-btn" data-index="${i}" data-rule="${htmlPrefix}">×</button>`;
-        listDiv.appendChild(item);
-    }
-    listDiv.querySelectorAll('.delete-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-            const index = parseInt(e.target.getAttribute('data-index') || '0');
-            const rule = e.target.getAttribute('data-rule') || '';
-            deleteRuleTemplate(rule, index);
-        });
-    });
-}
-function addRuleTemplate(htmlPrefix) {
-    const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-    const input = document.getElementById(`${htmlPrefix}-new-template`);
-    if (!input || !ruleId)
-        return;
-    const name = input.value.trim();
-    if (!name)
-        return;
-    if (!currentSettings.ruleSpecificTemplates) {
-        currentSettings.ruleSpecificTemplates = {};
-    }
-    if (!currentSettings.ruleSpecificTemplates[ruleId]) {
-        currentSettings.ruleSpecificTemplates[ruleId] = [];
-    }
-    if (currentSettings.ruleSpecificTemplates[ruleId].includes(name))
-        return;
-    currentSettings.ruleSpecificTemplates[ruleId].push(name);
-    input.value = '';
-    renderRuleTemplateList(htmlPrefix);
-    saveSettings();
-}
-function deleteRuleTemplate(htmlPrefix, index) {
-    const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-    if (!ruleId || !currentSettings.ruleSpecificTemplates?.[ruleId])
-        return;
-    currentSettings.ruleSpecificTemplates[ruleId].splice(index, 1);
-    renderRuleTemplateList(htmlPrefix);
-    saveSettings();
-}
-function renderRulePresetList(htmlPrefix) {
-    const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-    const listDiv = document.getElementById(`${htmlPrefix}-presets-list`);
-    if (!listDiv || !ruleId)
-        return;
-    const presets = currentSettings.ruleSpecificPresets?.[ruleId] || [];
-    listDiv.innerHTML = '';
-    if (presets.length === 0) {
-        listDiv.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-        return;
-    }
-    for (let i = 0; i < presets.length; i++) {
-        const preset = presets[i];
-        const item = document.createElement('div');
-        item.className = 'preset-item';
-        item.innerHTML = `
-      <span class="preset-name">${escapeHtml(preset.name)}</span>
-      <span class="preset-size">${preset.minWidth}×${preset.minHeight}px</span>
-      <button class="delete-btn" data-index="${i}" data-rule="${htmlPrefix}">×</button>
-    `;
-        listDiv.appendChild(item);
-    }
-    listDiv.querySelectorAll('.delete-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-            const index = parseInt(e.target.getAttribute('data-index') || '0');
-            const rule = e.target.getAttribute('data-rule') || '';
-            deleteRulePreset(rule, index);
-        });
-    });
-}
-function addRulePreset(htmlPrefix) {
-    const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-    const nameInput = document.getElementById(`${htmlPrefix}-new-preset-name`);
-    const widthInput = document.getElementById(`${htmlPrefix}-new-preset-width`);
-    const heightInput = document.getElementById(`${htmlPrefix}-new-preset-height`);
-    if (!nameInput || !widthInput || !heightInput || !ruleId)
-        return;
-    const name = nameInput.value.trim();
-    const minWidth = parseInt(widthInput.value) || 0;
-    const minHeight = parseInt(heightInput.value) || 0;
-    if (!name)
-        return;
-    if (!currentSettings.ruleSpecificPresets) {
-        currentSettings.ruleSpecificPresets = {};
-    }
-    if (!currentSettings.ruleSpecificPresets[ruleId]) {
-        currentSettings.ruleSpecificPresets[ruleId] = [];
-    }
-    if (currentSettings.ruleSpecificPresets[ruleId].some(p => p.name === name))
-        return;
-    currentSettings.ruleSpecificPresets[ruleId].push({ name, minWidth, minHeight });
-    nameInput.value = '';
-    widthInput.value = '';
-    heightInput.value = '';
-    renderRulePresetList(htmlPrefix);
-    saveSettings();
-}
-function deleteRulePreset(htmlPrefix, index) {
-    const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-    if (!ruleId || !currentSettings.ruleSpecificPresets?.[ruleId])
-        return;
-    currentSettings.ruleSpecificPresets[ruleId].splice(index, 1);
-    renderRulePresetList(htmlPrefix);
-    saveSettings();
-}
-function renderAllRuleLists() {
-    for (const htmlPrefix of Object.keys(HTML_TO_RULE_ID)) {
-        renderRuleTemplateList(htmlPrefix);
-        renderRulePresetList(htmlPrefix);
-    }
-}
-function initRuleManagement() {
-    // Patreon
-    document.getElementById('patreon-add-template')?.addEventListener('click', () => addRuleTemplate('patreon'));
-    document.getElementById('patreon-add-preset')?.addEventListener('click', () => addRulePreset('patreon'));
-    // Pixiv Fanbox
-    document.getElementById('fanbox-add-template')?.addEventListener('click', () => addRuleTemplate('fanbox'));
-    document.getElementById('fanbox-add-preset')?.addEventListener('click', () => addRulePreset('fanbox'));
-    // Generic
-    document.getElementById('generic-add-template')?.addEventListener('click', () => addRuleTemplate('generic'));
-    document.getElementById('generic-add-preset')?.addEventListener('click', () => addRulePreset('generic'));
-}
-// ========================================
-// オーバーレイトグル管理
-// ========================================
-function initOverlayToggle() {
-    if (overlayEnabledCheckbox) {
-        overlayEnabledCheckbox.addEventListener('change', async () => {
-            currentSettings.overlayEnabled = overlayEnabledCheckbox.checked;
-            await saveSettings();
-            // 全てのタブにオーバーレイの表示/非表示を通知
-            try {
-                chrome.tabs.query({}, (tabs) => {
-                    for (const tab of tabs) {
-                        if (tab.id) {
-                            chrome.tabs.sendMessage(tab.id, {
-                                type: 'TOGGLE_OVERLAY',
-                                enabled: currentSettings.overlayEnabled,
-                            }).catch(() => {
-                                // タブが対応していない場合は無視
-                            });
-                        }
-                    }
-                });
-            }
-            catch (error) {
-                console.error('Failed to notify tabs:', error);
-            }
-        });
-    }
-}
-// ========================================
-// 設定保存
-// ========================================
 async function saveSettings() {
-    try {
-        await chrome.runtime.sendMessage({
-            type: 'SAVE_SETTINGS',
-            settings: currentSettings,
-        });
-    }
-    catch (error) {
-        console.error('Failed to save settings:', error);
-    }
-}
-// グローバル設定保存ボタン
-if (saveGlobalSettingsBtn) {
-    saveGlobalSettingsBtn.addEventListener('click', async () => {
-        currentSettings.filenameTemplate = filenameTemplateInput.value || DEFAULT_SETTINGS.filenameTemplate;
-        currentSettings.downloadFolder = downloadFolderInput.value || DEFAULT_SETTINGS.downloadFolder;
-        currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
-        try {
-            await chrome.runtime.sendMessage({
-                type: 'SAVE_SETTINGS',
-                settings: currentSettings,
-            });
-            popup_status.textContent = '設定を保存しました';
-            setTimeout(() => {
-                popup_status.textContent = '';
-            }, 2000);
-        }
-        catch (error) {
-            popup_status.textContent = '保存に失敗しました';
-        }
+    currentSettings = normalizeSettings(currentSettings);
+    await chrome.runtime.sendMessage({
+        type: 'SAVE_SETTINGS',
+        settings: currentSettings,
     });
+}
+function showStatus(message) {
+    if (!popup_status)
+        return;
+    popup_status.textContent = message;
+    setTimeout(() => {
+        popup_status.textContent = '';
+    }, 2000);
 }
 
 /******/ })()

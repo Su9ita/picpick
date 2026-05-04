@@ -2,8 +2,9 @@
 import { getExtractor, detectSite } from '../extractors';
 import { filterImages } from '../utils/image-filter';
 import { autoScrollToLoadAll } from '../utils/auto-scroller';
-import { Settings, DEFAULT_SETTINGS, SizePreset, DEFAULT_SIZE_PRESETS, RuleSessionSettings } from '../types/settings';
+import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
+import { getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 
 let overlayContainer: HTMLDivElement | null = null;
 let isDownloading = false;
@@ -462,23 +463,14 @@ function createOverlay(): void {
           </select>
         </div>
 
-        <!-- カスタム名モード -->
+        <!-- 保存名プリセット -->
         <div class="picpick-naming-section">
-          <div class="picpick-mode-toggle">
-            <label class="picpick-toggle-label">
-              <input type="radio" name="picpick-naming-mode" value="custom" id="picpick-mode-custom" checked>
-              <span>カスタム名</span>
-            </label>
-            <label class="picpick-toggle-label">
-              <input type="radio" name="picpick-naming-mode" value="template" id="picpick-mode-template">
-              <span>テンプレート</span>
-            </label>
+          <div style="margin-bottom: 8px;">
+            <label style="display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 4px;">保存名プリセット</label>
+            <select id="picpick-filename-preset-select" class="picpick-preset-select"></select>
           </div>
           <div id="picpick-custom-name-section" class="picpick-custom-name-section">
             <div class="picpick-custom-name-row">
-              <select id="picpick-custom-template-select" class="picpick-template-dropdown">
-                <option value="">-- 選択 --</option>
-              </select>
               <input type="text" id="picpick-custom-name" placeholder="ファイル名を入力" class="picpick-custom-input">
             </div>
             <div class="picpick-preview">
@@ -508,18 +500,18 @@ function createOverlay(): void {
           </summary>
           <div class="picpick-settings-content">
             <div class="picpick-setting-item">
-              <label>ファイル名テンプレート</label>
+              <label>保存名プリセットのテンプレート</label>
               <input type="text" id="picpick-filename-template" value="{date}_{title}_{index}">
             </div>
             <div class="picpick-setting-item">
               <label>保存フォルダ</label>
-              <input type="text" id="picpick-download-folder" value="PicPick">
+              <input type="text" id="picpick-download-folder" value="picpick">
             </div>
             <div class="picpick-setting-item">
-              <label>カスタム名テンプレート</label>
+              <label>このルールの保存名プリセット</label>
               <div id="picpick-custom-template-list" class="picpick-template-list"></div>
               <div class="picpick-template-add">
-                <input type="text" id="picpick-new-template" placeholder="テンプレート名">
+                <input type="text" id="picpick-new-template" placeholder="表示名">
                 <button id="picpick-add-template" class="picpick-btn-small">追加</button>
               </div>
             </div>
@@ -585,12 +577,9 @@ function createOverlay(): void {
   });
 
   // カスタム名モードのイベント
-  const modeCustomRadio = document.getElementById('picpick-mode-custom') as HTMLInputElement;
-  const modeTemplateRadio = document.getElementById('picpick-mode-template') as HTMLInputElement;
   const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
   const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
-  const customTemplateSelect = document.getElementById('picpick-custom-template-select') as HTMLSelectElement;
-  const filenamePreview = document.getElementById('picpick-filename-preview') as HTMLSpanElement;
+  const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
 
   // 設定パネルのイベント
   const filenameTemplateInput = document.getElementById('picpick-filename-template') as HTMLInputElement;
@@ -600,23 +589,22 @@ function createOverlay(): void {
   const addTemplateBtn = document.getElementById('picpick-add-template') as HTMLButtonElement;
   const saveSettingsBtn = document.getElementById('picpick-save-settings') as HTMLButtonElement;
 
-  // モード切替
-  modeCustomRadio?.addEventListener('change', () => {
-    customNameSection.style.display = 'block';
-    currentSettings.namingMode = 'custom';
-  });
-
-  modeTemplateRadio?.addEventListener('change', () => {
-    customNameSection.style.display = 'none';
-    currentSettings.namingMode = 'template';
-  });
-
-  // テンプレート選択
-  customTemplateSelect?.addEventListener('change', () => {
-    if (customTemplateSelect.value) {
-      customNameInput.value = customTemplateSelect.value;
-      updateOverlayFilenamePreview();
+  filenamePresetSelect?.addEventListener('change', () => {
+    const ruleId = currentSettings.activeRuleId || 'generic';
+    if (!currentSettings.ruleSessionSettings) currentSettings.ruleSessionSettings = {};
+    if (!currentSettings.ruleSessionSettings[ruleId]) {
+      currentSettings.ruleSessionSettings[ruleId] = {} as RuleSessionSettings;
     }
+    currentSettings.ruleSessionSettings[ruleId] = {
+      ...currentSettings.ruleSessionSettings[ruleId],
+      selectedFilenamePresetId: filenamePresetSelect.value,
+      namingMode: getSelectedFilenamePreset(currentSettings, ruleId).template.includes('{custom}') ? 'custom' : 'template',
+      customName: customNameInput?.value || '',
+      selectedPreset: (document.getElementById('picpick-preset-select') as HTMLSelectElement)?.value || '',
+    };
+    currentSettings.namingMode = currentSettings.ruleSessionSettings[ruleId]!.namingMode;
+    updateCustomNameVisibility();
+    updateOverlayFilenamePreview();
   });
 
   // カスタム名入力
@@ -624,13 +612,33 @@ function createOverlay(): void {
 
   // テンプレート追加
   addTemplateBtn?.addEventListener('click', () => {
-    const name = newTemplateInput?.value.trim();
-    if (name && !currentSettings.customNameTemplates.includes(name)) {
-      currentSettings.customNameTemplates.push(name);
-      newTemplateInput.value = '';
-      renderOverlayCustomTemplates();
-      updateOverlayCustomTemplateSelect();
-    }
+    const label = newTemplateInput?.value.trim();
+    const template = filenameTemplateInput?.value.trim();
+    const ruleId = currentSettings.activeRuleId || 'generic';
+    if (!label || !template) return;
+
+    if (!currentSettings.ruleFilenamePresets) currentSettings.ruleFilenamePresets = {};
+    if (!currentSettings.ruleFilenamePresets[ruleId]) currentSettings.ruleFilenamePresets[ruleId] = [];
+    if (currentSettings.ruleFilenamePresets[ruleId].some((preset) => preset.label === label || preset.template === template)) return;
+
+    const filenamePreset = {
+      id: `overlay-${Date.now()}`,
+      label,
+      template,
+    };
+    currentSettings.ruleFilenamePresets[ruleId].push(filenamePreset);
+    if (!currentSettings.ruleSessionSettings) currentSettings.ruleSessionSettings = {};
+    currentSettings.ruleSessionSettings[ruleId] = {
+      ...(currentSettings.ruleSessionSettings[ruleId] || {} as RuleSessionSettings),
+      selectedFilenamePresetId: filenamePreset.id,
+      namingMode: template.includes('{custom}') ? 'custom' : 'template',
+      customName: customNameInput?.value || '',
+      selectedPreset: presetSelect?.value || '',
+    };
+    currentSettings.namingMode = currentSettings.ruleSessionSettings[ruleId]!.namingMode;
+    newTemplateInput.value = '';
+    renderOverlayCustomTemplates();
+    updateFilenamePresetDropdown();
   });
 
   // 設定保存
@@ -640,6 +648,7 @@ function createOverlay(): void {
 
     if (isExtensionContextValid()) {
       try {
+        currentSettings = normalizeSettings(currentSettings);
         await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: currentSettings });
         saveSettingsBtn.textContent = '保存しました!';
         setTimeout(() => {
@@ -897,6 +906,7 @@ function showConfirmDialog(): void {
 
   updateFilteredCount();
   initOverlayNamingMode();
+  updateFilenamePresetDropdown();
   dialog.classList.add('show');
 }
 
@@ -939,7 +949,11 @@ function switchRule(ruleId: string): void {
     const customName = (document.getElementById('picpick-custom-name') as HTMLInputElement)?.value || '';
     const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
     const selectedPreset = presetSelect?.value || '';
-    const namingMode = (document.querySelector('input[name="picpick-naming-mode"]:checked') as HTMLInputElement)?.value || 'custom';
+    const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
+    const selectedFilenamePresetId = filenamePresetSelect?.value;
+    const selectedFilenamePreset = getRuleFilenamePresets(currentSettings, currentSettings.activeRuleId)
+      .find((preset) => preset.id === selectedFilenamePresetId);
+    const namingMode = selectedFilenamePreset?.template.includes('{custom}') ? 'custom' : 'template';
 
     if (!currentSettings.ruleSessionSettings[currentSettings.activeRuleId]) {
       currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {} as RuleSessionSettings;
@@ -947,7 +961,8 @@ function switchRule(ruleId: string): void {
     currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {
       customName,
       selectedPreset,
-      namingMode: namingMode as 'custom' | 'template',
+      namingMode,
+      selectedFilenamePresetId,
     };
   }
 
@@ -956,24 +971,16 @@ function switchRule(ruleId: string): void {
 
   // プリセットドロップダウンを更新
   updatePresetDropdown();
+  updateFilenamePresetDropdown();
 
   // 新しいルールの設定を復元
   const ruleSetting = currentSettings.ruleSessionSettings?.[ruleId];
   if (ruleSetting) {
     const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
     const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
-    const modeCustom = document.getElementById('picpick-mode-custom') as HTMLInputElement;
-    const modeTemplate = document.getElementById('picpick-mode-template') as HTMLInputElement;
 
     if (customNameInput) customNameInput.value = ruleSetting.customName;
     if (presetSelect) presetSelect.value = ruleSetting.selectedPreset;
-    if (modeCustom && modeTemplate) {
-      if (ruleSetting.namingMode === 'custom') {
-        modeCustom.checked = true;
-      } else {
-        modeTemplate.checked = true;
-      }
-    }
 
     // UIを更新
     updateFilteredCount();
@@ -1046,60 +1053,71 @@ function renderOverlayCustomTemplates(): void {
   const list = document.getElementById('picpick-custom-template-list');
   if (!list) return;
 
-  if (currentSettings.customNameTemplates.length === 0) {
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const presets = getRuleFilenamePresets(currentSettings, ruleId);
+
+  if (presets.length === 0) {
     list.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
     return;
   }
 
-  list.innerHTML = currentSettings.customNameTemplates
-    .map((name, i) => '<div class="picpick-template-item"><span>' + name + '</span><button data-index="' + i + '">×</button></div>')
+  list.innerHTML = presets
+    .map((preset, i) => '<div class="picpick-template-item"><span>' + preset.label + '</span><button data-index="' + i + '"' + (preset.id === 'default' || preset.id === 'manual' ? ' disabled' : '') + '>×</button></div>')
     .join('');
 
   list.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const index = parseInt((e.target as HTMLElement).dataset.index || '0');
-      currentSettings.customNameTemplates.splice(index, 1);
+      const targetPresets = currentSettings.ruleFilenamePresets?.[ruleId];
+      if (!targetPresets || targetPresets[index]?.id === 'default' || targetPresets[index]?.id === 'manual') return;
+      targetPresets.splice(index, 1);
       renderOverlayCustomTemplates();
-      updateOverlayCustomTemplateSelect();
+      updateFilenamePresetDropdown();
     });
   });
 }
 
-// オーバーレイのカスタム名テンプレート選択を更新
-function updateOverlayCustomTemplateSelect(): void {
-  const select = document.getElementById('picpick-custom-template-select') as HTMLSelectElement;
+function updateFilenamePresetDropdown(): void {
+  const select = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
   if (!select) return;
 
-  select.innerHTML = '<option value="">-- 選択 --</option>';
-  currentSettings.customNameTemplates.forEach(name => {
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const presets = getRuleFilenamePresets(currentSettings, ruleId);
+  const selectedId = currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id || '';
+
+  select.innerHTML = '';
+  presets.forEach(preset => {
     const option = document.createElement('option');
-    option.value = name;
-    option.textContent = name;
+    option.value = preset.id;
+    option.textContent = `${preset.label} - ${preset.template}`;
     select.appendChild(option);
   });
+
+  select.value = selectedId;
+  updateCustomNameVisibility();
+}
+
+function updateCustomNameVisibility(): void {
+  const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const preset = getSelectedFilenamePreset(currentSettings, ruleId);
+  if (customNameSection) {
+    customNameSection.style.display = preset.template.includes('{custom}') ? 'block' : 'none';
+  }
 }
 
 // オーバーレイのカスタム名モードを初期化
 function initOverlayNamingMode(): void {
-  const modeCustomRadio = document.getElementById('picpick-mode-custom') as HTMLInputElement;
-  const modeTemplateRadio = document.getElementById('picpick-mode-template') as HTMLInputElement;
-  const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
   const filenameTemplateInput = document.getElementById('picpick-filename-template') as HTMLInputElement;
   const downloadFolderInput = document.getElementById('picpick-download-folder') as HTMLInputElement;
 
-  if (currentSettings.namingMode === 'template') {
-    if (modeTemplateRadio) modeTemplateRadio.checked = true;
-    if (customNameSection) customNameSection.style.display = 'none';
-  } else {
-    if (modeCustomRadio) modeCustomRadio.checked = true;
-    if (customNameSection) customNameSection.style.display = 'block';
-  }
+  updateCustomNameVisibility();
 
   if (filenameTemplateInput) filenameTemplateInput.value = currentSettings.filenameTemplate;
   if (downloadFolderInput) downloadFolderInput.value = currentSettings.downloadFolder;
 
   renderOverlayCustomTemplates();
-  updateOverlayCustomTemplateSelect();
+  updateFilenamePresetDropdown();
   updateOverlayFilenamePreview();
 }
 
@@ -1120,9 +1138,13 @@ async function handleConfirmDownload(): Promise<void> {
   // 【新規】ダウンロード前にルール設定を保存
   if (currentSettings.activeRuleId && currentSettings.ruleSessionSettings) {
     const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
+    const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
     const customName = customNameInput?.value || '';
     const selectedPreset = presetSelect?.value || '';
-    const namingMode = (document.querySelector('input[name="picpick-naming-mode"]:checked') as HTMLInputElement)?.value || 'custom';
+    const selectedFilenamePresetId = filenamePresetSelect?.value;
+    const selectedFilenamePreset = getRuleFilenamePresets(currentSettings, currentSettings.activeRuleId)
+      .find((preset) => preset.id === selectedFilenamePresetId);
+    const namingMode = selectedFilenamePreset?.template.includes('{custom}') ? 'custom' : 'template';
 
     if (!currentSettings.ruleSessionSettings[currentSettings.activeRuleId]) {
       currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {} as RuleSessionSettings;
@@ -1130,8 +1152,10 @@ async function handleConfirmDownload(): Promise<void> {
     currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {
       customName,
       selectedPreset,
-      namingMode: namingMode as 'custom' | 'template',
+      namingMode,
+      selectedFilenamePresetId,
     };
+    currentSettings.namingMode = namingMode;
   }
 
   hideConfirmDialog();
@@ -1142,12 +1166,12 @@ async function handleConfirmDownload(): Promise<void> {
   status.classList.add('show');
 
   // 設定を更新
-  const settings: Settings = {
+  const settings: Settings = normalizeSettings({
     ...currentSettings,
     minWidth: parseInt(minWidthInput.value) || 0,
     minHeight: parseInt(minHeightInput.value) || 0,
     selectedPreset: presetSelect?.value || '',
-  };
+  });
 
   // 設定を保存（エラーは無視）
   if (isExtensionContextValid()) {
@@ -1178,11 +1202,8 @@ async function handleConfirmDownload(): Promise<void> {
 
     const result = await new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
       try {
-        // カスタム名モードの場合はcustomNameを送信
         const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
-        const customName = settings.namingMode === 'custom'
-          ? customNameInput?.value.trim()
-          : undefined;
+        const customName = customNameInput?.value.trim() || undefined;
 
         chrome.runtime.sendMessage({
           type: 'DOWNLOAD_IMAGES',
@@ -1261,21 +1282,9 @@ async function getSettings(): Promise<Settings> {
           return;
         }
         if (response && !response.error) {
-          // 保存されたプリセットがある場合、それをベースにする
-          const savedPresets = response.sizePresets || [];
-          // デフォルトプリセットのうち、保存されていないものを追加
-          const savedPresetNames = new Set(savedPresets.map((p: SizePreset) => p.name));
-          const newPresets = DEFAULT_SIZE_PRESETS.filter((p: SizePreset) => !savedPresetNames.has(p.name));
-          const mergedPresets = [...savedPresets, ...newPresets];
-
-          const mergedSettings: Settings = {
-            ...DEFAULT_SETTINGS,
-            ...response,
-            sizePresets: mergedPresets,
-          };
-          resolve(mergedSettings);
+          resolve(normalizeSettings(response));
         } else {
-          resolve(DEFAULT_SETTINGS);
+          resolve(normalizeSettings(DEFAULT_SETTINGS));
         }
       });
     } catch (error) {

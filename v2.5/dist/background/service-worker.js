@@ -2,7 +2,7 @@
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 472
+/***/ 268
 (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 // ESM COMPAT FLAG
@@ -482,13 +482,31 @@ const DEFAULT_SIZE_PRESETS = [
     { name: '5K (5120px)', minWidth: 5120, minHeight: 2880 },
     { name: '8K (7680px)', minWidth: 7680, minHeight: 4320 },
 ];
+const DEFAULT_RULE_FILENAME_PRESETS = {
+    generic: [
+        { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+    patreon: [
+        { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+    pixiv_fanbox: [
+        { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+    x: [
+        { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    ],
+};
 // デフォルトサイトルールをインポート（循環参照を避けるため遅延インポート）
 let defaultSiteRulesInitialized = false;
 let cachedDefaultSiteRules = [];
 function getDefaultSiteRules() {
     if (!defaultSiteRulesInitialized) {
         try {
-            const { DEFAULT_SITE_RULES } = __webpack_require__(472);
+            const { DEFAULT_SITE_RULES } = __webpack_require__(268);
             cachedDefaultSiteRules = DEFAULT_SITE_RULES;
             defaultSiteRulesInitialized = true;
         }
@@ -506,7 +524,7 @@ const DEFAULT_SETTINGS = {
     minWidth: 400,
     minHeight: 400,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-    downloadFolder: 'PicPick',
+    downloadFolder: 'picpick',
     scanScrollEnabled: false,
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
@@ -522,21 +540,25 @@ const DEFAULT_SETTINGS = {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'manual',
         },
         'patreon': {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'default',
         },
         'pixiv_fanbox': {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'default',
         },
         'x': {
             customName: '',
             selectedPreset: '標準 (400px)',
             namingMode: 'custom',
+            selectedFilenamePresetId: 'default',
         },
     },
     // サイトルール関連
@@ -556,6 +578,7 @@ const DEFAULT_SETTINGS = {
         'pixiv_fanbox': [],
         'x': [],
     },
+    ruleFilenamePresets: DEFAULT_RULE_FILENAME_PRESETS,
 };
 
 ;// ./src/utils/filename-template.ts
@@ -603,17 +626,17 @@ async function findNextIndex(basePrefix, _downloadFolder) {
     });
 }
 // ベースプレフィックス（連番なしのファイル名）を生成
-function generateBasePrefix(template, imageInfo) {
+function generateBasePrefix(template, imageInfo, customName = '') {
     // {index} を除いたテンプレートでファイル名を生成
     const templateWithoutIndex = template.replace(/\{index\}/g, '').replace(/_+$/, '');
-    const vars = buildVariablesWithoutIndex(imageInfo);
+    const vars = buildVariablesWithoutIndex(imageInfo, customName);
     let filename = templateWithoutIndex;
     for (const [key, value] of Object.entries(vars)) {
         filename = filename.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
     }
     return sanitizeFilename(filename);
 }
-function buildVariablesWithoutIndex(imageInfo) {
+function buildVariablesWithoutIndex(imageInfo, customName = '') {
     const rawDate = imageInfo.metadata.postDate;
     const date = rawDate instanceof Date
         ? rawDate
@@ -631,10 +654,11 @@ function buildVariablesWithoutIndex(imageInfo) {
         postId: imageInfo.metadata.postId || 'unknown',
         original: urlFilename.replace(/\.[^.]+$/, ''),
         ext,
+        custom: sanitizeForFilename(customName || 'image'),
     };
 }
-function generateFilename(template, imageInfo, index) {
-    const vars = buildVariables(imageInfo, index);
+function generateFilename(template, imageInfo, index, customName = '') {
+    const vars = buildVariables(imageInfo, index, customName);
     let filename = template;
     for (const [key, value] of Object.entries(vars)) {
         filename = filename.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
@@ -674,7 +698,7 @@ function generateCustomBasePrefix(customName, imageInfo) {
     const sanitizedName = sanitizeForFilename(customName || 'image');
     return sanitizeFilename(`${dateStr}_${sanitizedName}`);
 }
-function buildVariables(imageInfo, index) {
+function buildVariables(imageInfo, index, customName = '') {
     const rawDate = imageInfo.metadata.postDate;
     // 文字列の場合はDateに変換、nullや無効な場合は現在日時
     const date = rawDate instanceof Date
@@ -695,6 +719,7 @@ function buildVariables(imageInfo, index) {
         index: String(index).padStart(2, '0'),
         original: urlFilename.replace(/\.[^.]+$/, ''),
         ext,
+        custom: sanitizeForFilename(customName || 'image'),
     };
 }
 function formatDate(date, format) {
@@ -735,7 +760,113 @@ function sanitizeFilename(filename) {
         .slice(0, 200);
 }
 
+;// ./src/utils/settings-normalizer.ts
+
+const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+function cloneFilenamePresets(source) {
+    return Object.fromEntries(Object.entries(source).map(([ruleId, presets]) => [
+        ruleId,
+        presets.map((preset) => ({ ...preset })),
+    ]));
+}
+function makePresetId(prefix, value, index) {
+    return `${prefix}-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset'}`;
+}
+function legacyNameToTemplate(value) {
+    return value.includes('{') ? value : `{date}_${value}_{index}`;
+}
+function addUniquePreset(presets, preset) {
+    if (presets.some((existing) => existing.id === preset.id || existing.template === preset.template)) {
+        return;
+    }
+    presets.push(preset);
+}
+function mergeSizePresets(saved) {
+    const existing = Array.isArray(saved) ? saved : [];
+    const existingNames = new Set(existing.map((preset) => preset.name));
+    return [
+        ...existing,
+        ...DEFAULT_SIZE_PRESETS.filter((preset) => !existingNames.has(preset.name)),
+    ];
+}
+function normalizeSettings(input) {
+    const saved = input || {};
+    const ruleFilenamePresets = cloneFilenamePresets(DEFAULT_RULE_FILENAME_PRESETS);
+    if (saved.ruleFilenamePresets) {
+        for (const [ruleId, presets] of Object.entries(saved.ruleFilenamePresets)) {
+            if (!ruleFilenamePresets[ruleId]) {
+                ruleFilenamePresets[ruleId] = [];
+            }
+            for (const preset of presets || []) {
+                if (!preset?.label || !preset?.template)
+                    continue;
+                addUniquePreset(ruleFilenamePresets[ruleId], { ...preset });
+            }
+        }
+    }
+    for (const ruleId of RULE_IDS) {
+        if (!ruleFilenamePresets[ruleId]) {
+            ruleFilenamePresets[ruleId] = [];
+        }
+        const legacyRuleTemplates = saved.ruleSpecificTemplates?.[ruleId] || [];
+        legacyRuleTemplates.forEach((value, index) => {
+            addUniquePreset(ruleFilenamePresets[ruleId], {
+                id: makePresetId('legacy-rule', value, index),
+                label: value,
+                template: legacyNameToTemplate(value),
+            });
+        });
+        const legacyGlobalTemplates = saved.customNameTemplates || [];
+        legacyGlobalTemplates.forEach((value, index) => {
+            addUniquePreset(ruleFilenamePresets[ruleId], {
+                id: makePresetId('legacy-global', value, index),
+                label: value,
+                template: legacyNameToTemplate(value),
+            });
+        });
+    }
+    const settings = {
+        ...DEFAULT_SETTINGS,
+        ...saved,
+        sizePresets: mergeSizePresets(saved.sizePresets),
+        customNameTemplates: saved.customNameTemplates || [],
+        ruleSessionSettings: {
+            ...DEFAULT_SETTINGS.ruleSessionSettings,
+            ...(saved.ruleSessionSettings || {}),
+        },
+        ruleSpecificTemplates: {
+            ...DEFAULT_SETTINGS.ruleSpecificTemplates,
+            ...(saved.ruleSpecificTemplates || {}),
+        },
+        ruleSpecificPresets: {
+            ...DEFAULT_SETTINGS.ruleSpecificPresets,
+            ...(saved.ruleSpecificPresets || {}),
+        },
+        ruleFilenamePresets,
+    };
+    for (const ruleId of RULE_IDS) {
+        const session = settings.ruleSessionSettings?.[ruleId];
+        if (session && !session.selectedFilenamePresetId) {
+            session.selectedFilenamePresetId = session.namingMode === 'template' ? 'default' : 'manual';
+        }
+    }
+    return settings;
+}
+function getRuleFilenamePresets(settings, ruleId) {
+    return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];
+}
+function getSelectedFilenamePreset(settings, ruleId) {
+    const presets = getRuleFilenamePresets(settings, ruleId);
+    const selectedId = settings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId;
+    return presets.find((preset) => preset.id === selectedId) || presets[0] || {
+        id: 'fallback',
+        label: '標準',
+        template: settings.filenameTemplate || DEFAULT_SETTINGS.filenameTemplate,
+    };
+}
+
 ;// ./src/background/service-worker.ts
+
 
 
 // メッセージリスナー
@@ -766,7 +897,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 });
 async function handleDownload(message) {
-    const { images, settings, customName } = message;
+    const { images, customName } = message;
+    const settings = normalizeSettings(message.settings);
     let success = 0;
     let failed = 0;
     const errors = [];
@@ -776,19 +908,11 @@ async function handleDownload(message) {
         const image = images[i];
         let basePrefix;
         let filename;
-        // カスタム名モードとテンプレートモードで分岐
-        if (settings.namingMode === 'custom' && customName) {
-            // カスタム名モード: {date}_{customName}_{index}.{ext}
-            basePrefix = generateCustomBasePrefix(customName, image);
-            const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
-            filename = generateCustomFilename(customName, image, nextIndex);
-        }
-        else {
-            // テンプレートモード: 従来の処理
-            basePrefix = generateBasePrefix(settings.filenameTemplate, image);
-            const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
-            filename = generateFilename(settings.filenameTemplate, image, nextIndex);
-        }
+        const activeRuleId = settings.activeRuleId || 'generic';
+        const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
+        basePrefix = generateBasePrefix(selectedFilenamePreset.template, image, customName || '');
+        const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
+        filename = generateFilename(selectedFilenamePreset.template, image, nextIndex, customName || '');
         attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
         try {
             const downloadPath = settings.downloadFolder
@@ -914,17 +1038,17 @@ async function getSettings() {
     return new Promise((resolve) => {
         chrome.storage.sync.get('settings', (result) => {
             if (result.settings) {
-                resolve({ ...DEFAULT_SETTINGS, ...result.settings });
+                resolve(normalizeSettings(result.settings));
             }
             else {
-                resolve(DEFAULT_SETTINGS);
+                resolve(normalizeSettings(DEFAULT_SETTINGS));
             }
         });
     });
 }
 async function saveSettings(settings) {
     return new Promise((resolve) => {
-        chrome.storage.sync.set({ settings }, () => {
+        chrome.storage.sync.set({ settings: normalizeSettings(settings) }, () => {
             resolve();
         });
     });

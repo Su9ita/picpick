@@ -1,6 +1,7 @@
 import { DownloadImagesMessage } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
-import { generateFilename, generateBasePrefix, generateCustomFilename, generateCustomBasePrefix, findNextIndex } from '../utils/filename-template';
+import { generateFilename, generateBasePrefix, findNextIndex } from '../utils/filename-template';
+import { getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 
 // メッセージリスナー
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -38,7 +39,8 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
   failed: number;
   errors: string[];
 }> {
-  const { images, settings, customName } = message;
+  const { images, customName } = message;
+  const settings = normalizeSettings(message.settings);
   let success = 0;
   let failed = 0;
   const errors: string[] = [];
@@ -51,18 +53,12 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
     let basePrefix: string;
     let filename: string;
 
-    // カスタム名モードとテンプレートモードで分岐
-    if (settings.namingMode === 'custom' && customName) {
-      // カスタム名モード: {date}_{customName}_{index}.{ext}
-      basePrefix = generateCustomBasePrefix(customName, image);
-      const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
-      filename = generateCustomFilename(customName, image, nextIndex);
-    } else {
-      // テンプレートモード: 従来の処理
-      basePrefix = generateBasePrefix(settings.filenameTemplate, image);
-      const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
-      filename = generateFilename(settings.filenameTemplate, image, nextIndex);
-    }
+    const activeRuleId = settings.activeRuleId || 'generic';
+    const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
+
+    basePrefix = generateBasePrefix(selectedFilenamePreset.template, image, customName || '');
+    const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
+    filename = generateFilename(selectedFilenamePreset.template, image, nextIndex, customName || '');
 
     attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
 
@@ -213,9 +209,9 @@ async function getSettings(): Promise<Settings> {
   return new Promise((resolve) => {
     chrome.storage.sync.get('settings', (result) => {
       if (result.settings) {
-        resolve({ ...DEFAULT_SETTINGS, ...result.settings });
+        resolve(normalizeSettings(result.settings));
       } else {
-        resolve(DEFAULT_SETTINGS);
+        resolve(normalizeSettings(DEFAULT_SETTINGS));
       }
     });
   });
@@ -223,7 +219,7 @@ async function getSettings(): Promise<Settings> {
 
 async function saveSettings(settings: Settings): Promise<void> {
   return new Promise((resolve) => {
-    chrome.storage.sync.set({ settings }, () => {
+    chrome.storage.sync.set({ settings: normalizeSettings(settings) }, () => {
       resolve();
     });
   });

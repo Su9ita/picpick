@@ -4,6 +4,10 @@
   padding: 0;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
@@ -283,6 +287,15 @@ header h1 {
   border: 1px solid #d1d5db;
   border-radius: 4px;
   font-size: 13px;
+}
+
+.setting-item select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
 }
 
 .setting-item .switch-toggle input {
@@ -675,9 +688,15 @@ footer {
   margin: 8px 0;
   max-height: 150px;
   overflow-y: auto;
+  overflow-x: hidden;
   background: #f9fafb;
   border-radius: 4px;
   padding: 8px;
+}
+
+#filename-preset-list {
+  max-height: 260px;
+  padding: 6px;
 }
 
 .item-list-empty {
@@ -715,6 +734,73 @@ footer {
 
 .item-entry .delete-btn:hover {
   color: #dc2626;
+}
+
+.item-entry .delete-btn:disabled {
+  visibility: hidden;
+}
+
+.filename-preset-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.filename-preset-entry code {
+  display: block;
+  grid-column: 1 / -1;
+  max-width: calc(100% - 24px);
+  margin-left: 24px;
+  color: #4b5563;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.radio-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 !important;
+}
+
+.radio-row input {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.radio-row .name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.variable-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.variable-chip {
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: white;
+  color: #2563eb;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.variable-chip:hover {
+  background: #eef2ff;
+  border-color: #93c5fd;
 }
 
 /* ルール表示 */
@@ -756,6 +842,11 @@ footer {
   display: flex;
   gap: 6px;
   align-items: center;
+}
+
+.preset-input-group.stacked {
+  align-items: stretch;
+  flex-direction: column;
 }
 
 .input-medium {

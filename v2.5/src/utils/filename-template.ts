@@ -58,11 +58,12 @@ export async function findNextIndex(
 // ベースプレフィックス（連番なしのファイル名）を生成
 export function generateBasePrefix(
   template: string,
-  imageInfo: ImageInfo
+  imageInfo: ImageInfo,
+  customName: string = ''
 ): string {
   // {index} を除いたテンプレートでファイル名を生成
   const templateWithoutIndex = template.replace(/\{index\}/g, '').replace(/_+$/, '');
-  const vars = buildVariablesWithoutIndex(imageInfo);
+  const vars = buildVariablesWithoutIndex(imageInfo, customName);
 
   let filename = templateWithoutIndex;
   for (const [key, value] of Object.entries(vars)) {
@@ -72,7 +73,10 @@ export function generateBasePrefix(
   return sanitizeFilename(filename);
 }
 
-function buildVariablesWithoutIndex(imageInfo: ImageInfo): Omit<TemplateVariables, 'index'> {
+function buildVariablesWithoutIndex(
+  imageInfo: ImageInfo,
+  customName: string = ''
+): Omit<TemplateVariables, 'index'> {
   const rawDate = imageInfo.metadata.postDate;
   const date = rawDate instanceof Date
     ? rawDate
@@ -91,6 +95,7 @@ function buildVariablesWithoutIndex(imageInfo: ImageInfo): Omit<TemplateVariable
     postId: imageInfo.metadata.postId || 'unknown',
     original: urlFilename.replace(/\.[^.]+$/, ''),
     ext,
+    custom: sanitizeForFilename(customName || 'image'),
   };
 }
 
@@ -105,14 +110,16 @@ export interface TemplateVariables {
   index: string;
   original: string;
   ext: string;
+  custom: string;
 }
 
 export function generateFilename(
   template: string,
   imageInfo: ImageInfo,
-  index: number
+  index: number,
+  customName: string = ''
 ): string {
-  const vars = buildVariables(imageInfo, index);
+  const vars = buildVariables(imageInfo, index, customName);
 
   let filename = template;
   for (const [key, value] of Object.entries(vars)) {
@@ -172,7 +179,8 @@ export function generateCustomBasePrefix(
 
 function buildVariables(
   imageInfo: ImageInfo,
-  index: number
+  index: number,
+  customName: string = ''
 ): TemplateVariables {
   const rawDate = imageInfo.metadata.postDate;
   // 文字列の場合はDateに変換、nullや無効な場合は現在日時
@@ -195,6 +203,7 @@ function buildVariables(
     index: String(index).padStart(2, '0'),
     original: urlFilename.replace(/\.[^.]+$/, ''),
     ext,
+    custom: sanitizeForFilename(customName || 'image'),
   };
 }
 
