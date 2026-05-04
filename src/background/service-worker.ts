@@ -1,4 +1,4 @@
-import { DownloadImagesMessage } from '../types/messages';
+import { DownloadImagesMessage, XTweetMedia } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { generateFilename, generateBasePrefix, findNextIndex } from '../utils/filename-template';
 import { getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
@@ -16,6 +16,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     getSettings()
       .then((settings) => sendResponse(settings))
       .catch((error) => sendResponse({ error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'GET_X_TWEET_MEDIA') {
+    getXTweetMedia(message.postId)
+      .then((media) => sendResponse({ media }))
+      .catch((error) => sendResponse({ error: error.message, media: [] }));
     return true;
   }
 
@@ -231,4 +238,136 @@ async function resetSettings(): Promise<void> {
       resolve();
     });
   });
+}
+
+interface SyndicationVariant {
+  bitrate?: number;
+  content_type?: string;
+  type?: string;
+  url?: string;
+  src?: string;
+}
+
+interface SyndicationMediaDetail {
+  type?: string;
+  media_url_https?: string;
+  original_info?: {
+    width?: number;
+    height?: number;
+  };
+  video_info?: {
+    variants?: SyndicationVariant[];
+  };
+}
+
+interface SyndicationTweet {
+  mediaDetails?: SyndicationMediaDetail[];
+  video?: {
+    variants?: SyndicationVariant[];
+    poster?: string;
+  };
+}
+
+async function getXTweetMedia(postId: string): Promise<XTweetMedia[]> {
+  if (!/^\d+$/.test(postId)) {
+    throw new Error('Invalid tweet ID');
+  }
+
+  const url = `https://cdn.syndication.twimg.com/tweet-result?id=${encodeURIComponent(postId)}&lang=ja&token=picpick`;
+  const response = await fetch(url, {
+    credentials: 'omit',
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(`X media lookup failed: ${response.status}`);
+  }
+
+  const tweet = await response.json() as SyndicationTweet;
+  return extractVideoMedia(tweet, postId);
+}
+
+function extractVideoMedia(tweet: SyndicationTweet, postId: string): XTweetMedia[] {
+  const results: XTweetMedia[] = [];
+  const seen = new Set<string>();
+
+  for (const detail of tweet.mediaDetails || []) {
+    if (detail.type !== 'video' && detail.type !== 'animated_gif') continue;
+
+    const variant = selectBestMp4Variant(detail.video_info?.variants || []);
+    if (!variant) continue;
+
+    const mediaId = extractVideoMediaId(variant.url);
+    if (seen.has(mediaId)) continue;
+    seen.add(mediaId);
+
+    results.push({
+      url: variant.url,
+      originalUrl: variant.url,
+      width: detail.original_info?.width || extractVideoWidth(variant.url),
+      height: detail.original_info?.height || extractVideoHeight(variant.url),
+      mediaType: detail.type,
+      originalFilename: `${postId}_${mediaId}.${getExtensionFromUrl(variant.url) || 'mp4'}`,
+    });
+  }
+
+  if (results.length === 0 && tweet.video?.variants) {
+    const variant = selectBestMp4Variant(tweet.video.variants);
+    if (variant) {
+      const mediaId = extractVideoMediaId(variant.url);
+      results.push({
+        url: variant.url,
+        originalUrl: variant.url,
+        width: extractVideoWidth(variant.url),
+        height: extractVideoHeight(variant.url),
+        mediaType: 'video',
+        originalFilename: `${postId}_${mediaId}.${getExtensionFromUrl(variant.url) || 'mp4'}`,
+      });
+    }
+  }
+
+  return results;
+}
+
+function selectBestMp4Variant(variants: SyndicationVariant[]): { url: string; bitrate: number } | null {
+  const mp4Variants = variants
+    .map((variant) => ({
+      url: variant.url || variant.src || '',
+      bitrate: variant.bitrate || 0,
+      contentType: variant.content_type || variant.type || '',
+    }))
+    .filter((variant) => variant.url && variant.contentType === 'video/mp4');
+
+  if (mp4Variants.length === 0) return null;
+
+  return mp4Variants.sort((a, b) => b.bitrate - a.bitrate)[0];
+}
+
+function extractVideoMediaId(url: string): string {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    const lastPart = parts[parts.length - 1];
+    return parts.find((part) => /^\d{8,}$/.test(part)) || lastPart?.replace(/\.[^.]+$/, '') || 'video';
+  } catch {
+    return 'video';
+  }
+}
+
+function getExtensionFromUrl(url: string): string {
+  try {
+    const match = new URL(url).pathname.match(/\.([^.?/]+)$/);
+    return match ? match[1].toLowerCase() : '';
+  } catch {
+    return '';
+  }
+}
+
+function extractVideoWidth(url: string): number | null {
+  const match = url.match(/\/(\d+)x(\d+)\//);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function extractVideoHeight(url: string): number | null {
+  const match = url.match(/\/(\d+)x(\d+)\//);
+  return match ? parseInt(match[2], 10) : null;
 }

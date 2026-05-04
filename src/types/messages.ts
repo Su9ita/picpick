@@ -4,6 +4,7 @@ import { Settings } from './settings';
 export type MessageType =
   | 'EXTRACT_IMAGES'
   | 'DOWNLOAD_IMAGES'
+  | 'GET_X_TWEET_MEDIA'
   | 'GET_SETTINGS'
   | 'SAVE_SETTINGS'
   | 'RESET_SETTINGS'
@@ -19,6 +20,20 @@ export interface DownloadImagesMessage {
   images: ImageInfo[];
   settings: Settings;
   customName?: string;  // カスタム名モード時のファイル名
+}
+
+export interface XTweetMedia {
+  url: string;
+  originalUrl: string;
+  width: number | null;
+  height: number | null;
+  mediaType: 'video' | 'animated_gif';
+  originalFilename: string;
+}
+
+export interface GetXTweetMediaMessage {
+  type: 'GET_X_TWEET_MEDIA';
+  postId: string;
 }
 
 export interface GetSettingsMessage {
@@ -54,6 +69,7 @@ export interface DownloadProgressMessage {
 export type Message =
   | ExtractImagesMessage
   | DownloadImagesMessage
+  | GetXTweetMediaMessage
   | GetSettingsMessage
   | SaveSettingsMessage
   | ResetSettingsMessage

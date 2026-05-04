@@ -919,6 +919,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             .catch((error) => sendResponse({ error: error.message }));
         return true;
     }
+    if (message.type === 'GET_X_TWEET_MEDIA') {
+        getXTweetMedia(message.postId)
+            .then((media) => sendResponse({ media }))
+            .catch((error) => sendResponse({ error: error.message, media: [] }));
+        return true;
+    }
     if (message.type === 'SAVE_SETTINGS') {
         saveSettings(message.settings)
             .then(() => sendResponse({ success: true }))
@@ -1095,6 +1101,98 @@ async function resetSettings() {
             resolve();
         });
     });
+}
+async function getXTweetMedia(postId) {
+    if (!/^\d+$/.test(postId)) {
+        throw new Error('Invalid tweet ID');
+    }
+    const url = `https://cdn.syndication.twimg.com/tweet-result?id=${encodeURIComponent(postId)}&lang=ja&token=picpick`;
+    const response = await fetch(url, {
+        credentials: 'omit',
+        cache: 'no-store',
+    });
+    if (!response.ok) {
+        throw new Error(`X media lookup failed: ${response.status}`);
+    }
+    const tweet = await response.json();
+    return extractVideoMedia(tweet, postId);
+}
+function extractVideoMedia(tweet, postId) {
+    const results = [];
+    const seen = new Set();
+    for (const detail of tweet.mediaDetails || []) {
+        if (detail.type !== 'video' && detail.type !== 'animated_gif')
+            continue;
+        const variant = selectBestMp4Variant(detail.video_info?.variants || []);
+        if (!variant)
+            continue;
+        const mediaId = extractVideoMediaId(variant.url);
+        if (seen.has(mediaId))
+            continue;
+        seen.add(mediaId);
+        results.push({
+            url: variant.url,
+            originalUrl: variant.url,
+            width: detail.original_info?.width || extractVideoWidth(variant.url),
+            height: detail.original_info?.height || extractVideoHeight(variant.url),
+            mediaType: detail.type,
+            originalFilename: `${postId}_${mediaId}.${getExtensionFromUrl(variant.url) || 'mp4'}`,
+        });
+    }
+    if (results.length === 0 && tweet.video?.variants) {
+        const variant = selectBestMp4Variant(tweet.video.variants);
+        if (variant) {
+            const mediaId = extractVideoMediaId(variant.url);
+            results.push({
+                url: variant.url,
+                originalUrl: variant.url,
+                width: extractVideoWidth(variant.url),
+                height: extractVideoHeight(variant.url),
+                mediaType: 'video',
+                originalFilename: `${postId}_${mediaId}.${getExtensionFromUrl(variant.url) || 'mp4'}`,
+            });
+        }
+    }
+    return results;
+}
+function selectBestMp4Variant(variants) {
+    const mp4Variants = variants
+        .map((variant) => ({
+        url: variant.url || variant.src || '',
+        bitrate: variant.bitrate || 0,
+        contentType: variant.content_type || variant.type || '',
+    }))
+        .filter((variant) => variant.url && variant.contentType === 'video/mp4');
+    if (mp4Variants.length === 0)
+        return null;
+    return mp4Variants.sort((a, b) => b.bitrate - a.bitrate)[0];
+}
+function extractVideoMediaId(url) {
+    try {
+        const parts = new URL(url).pathname.split('/').filter(Boolean);
+        const lastPart = parts[parts.length - 1];
+        return parts.find((part) => /^\d{8,}$/.test(part)) || lastPart?.replace(/\.[^.]+$/, '') || 'video';
+    }
+    catch {
+        return 'video';
+    }
+}
+function getExtensionFromUrl(url) {
+    try {
+        const match = new URL(url).pathname.match(/\.([^.?/]+)$/);
+        return match ? match[1].toLowerCase() : '';
+    }
+    catch {
+        return '';
+    }
+}
+function extractVideoWidth(url) {
+    const match = url.match(/\/(\d+)x(\d+)\//);
+    return match ? parseInt(match[1], 10) : null;
+}
+function extractVideoHeight(url) {
+    const match = url.match(/\/(\d+)x(\d+)\//);
+    return match ? parseInt(match[2], 10) : null;
 }
 
 /******/ })()

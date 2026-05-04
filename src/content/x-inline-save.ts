@@ -1,5 +1,5 @@
 import { ImageInfo, ImageMetadata } from '../types/image-info';
-import { DownloadImagesMessage } from '../types/messages';
+import { DownloadImagesMessage, XTweetMedia } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { normalizeSettings } from '../utils/settings-normalizer';
 
@@ -55,7 +55,7 @@ function scanArticles(): void {
     }
 
     const images = extractImagesFromArticle(article);
-    if (images.length === 0) return;
+    if (images.length === 0 && !hasPotentialVideo(article)) return;
 
     const actionBar = findActionBar(article);
     if (!actionBar) return;
@@ -94,9 +94,9 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
 }
 
 async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElement): Promise<void> {
-  const images = extractImagesFromArticle(article);
+  const media = await extractDownloadMediaFromArticle(article);
 
-  if (images.length === 0) {
+  if (media.length === 0) {
     setButtonState(button, 'error');
     window.setTimeout(() => updateButtonStateForArticle(article), 1600);
     return;
@@ -108,18 +108,19 @@ async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElem
     const settings = await getDownloadSettings();
     const result = await sendDownloadMessage({
       type: 'DOWNLOAD_IMAGES',
-      images,
+      images: media,
       settings,
     });
 
-    if (result.error || result.success !== images.length || result.failed) {
+    if (result.error || result.success !== media.length || result.failed) {
       throw new Error(result.error || 'Download failed');
     }
 
-    for (const image of images) {
-      downloadedKeys.add(getMediaKey(image));
+    for (const item of media) {
+      downloadedKeys.add(getMediaKey(item));
     }
     await saveDownloadedKeys(downloadedKeys);
+    button.dataset.count = String(media.length);
     setButtonState(button, 'saved');
   } catch {
     setButtonState(button, 'error');
@@ -132,8 +133,9 @@ function updateButtonStateForArticle(article: HTMLElement): void {
   if (!button || button.dataset.state === 'loading') return;
 
   const images = extractImagesFromArticle(article);
-  button.dataset.count = String(images.length);
-  if (images.length > 0 && images.every((image) => downloadedKeys.has(getMediaKey(image)))) {
+  const hasVideo = hasPotentialVideo(article);
+  button.dataset.count = hasVideo ? `${images.length}+` : String(images.length);
+  if (!hasVideo && images.length > 0 && images.every((image) => downloadedKeys.has(getMediaKey(image)))) {
     setButtonState(button, 'saved');
   } else {
     setButtonState(button, 'ready');
@@ -147,7 +149,7 @@ function setButtonState(button: HTMLButtonElement, state: ButtonState): void {
 
   if (state === 'saved') {
     button.setAttribute('aria-label', 'Picpickで保存済み');
-    button.title = `保存済み - クリックで再保存 (${button.dataset.count || '?'}枚)`;
+    button.title = `保存済み - クリックで再保存 (${button.dataset.count || '?'}件)`;
   } else if (state === 'loading') {
     button.setAttribute('aria-label', 'Picpickで保存中');
     button.title = '保存中';
@@ -155,8 +157,19 @@ function setButtonState(button: HTMLButtonElement, state: ButtonState): void {
     button.setAttribute('aria-label', 'Picpickで画像を保存');
     button.title = state === 'error'
       ? '保存に失敗しました'
-      : `Picpickで画像を保存 (${button.dataset.count || '?'}枚)`;
+      : `Picpickで画像/動画を保存 (${button.dataset.count || '?'}件)`;
   }
+}
+
+async function extractDownloadMediaFromArticle(article: HTMLElement): Promise<ImageInfo[]> {
+  const images = extractImagesFromArticle(article);
+  const metadata = extractMetadataFromArticle(article);
+  if (!metadata.postId || metadata.postId === 'unknown' || !hasPotentialVideo(article)) {
+    return images;
+  }
+
+  const videos = await fetchTweetVideos(metadata);
+  return dedupeMedia([...images, ...videos]);
 }
 
 function extractImagesFromArticle(article: HTMLElement): ImageInfo[] {
@@ -174,6 +187,38 @@ function extractImagesFromArticle(article: HTMLElement): ImageInfo[] {
       originalFilename: extractFilenameFromUrl(media.url),
     },
   }));
+}
+
+async function fetchTweetVideos(metadata: ImageMetadata): Promise<ImageInfo[]> {
+  const response = await sendXTweetMediaMessage(metadata.postId);
+  return response.map((media, index) => ({
+    url: media.url,
+    originalUrl: media.originalUrl,
+    width: media.width,
+    height: media.height,
+    index: index + 1,
+    metadata: {
+      ...metadata,
+      originalFilename: media.originalFilename,
+    },
+  }));
+}
+
+function dedupeMedia(media: ImageInfo[]): ImageInfo[] {
+  const seen = new Set<string>();
+  const result: ImageInfo[] = [];
+
+  for (const item of media) {
+    const key = getMediaKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({
+      ...item,
+      index: result.length + 1,
+    });
+  }
+
+  return result;
 }
 
 interface ArticleMedia {
@@ -287,6 +332,14 @@ function extractMetadataFromArticle(article: HTMLElement): ImageMetadata {
   };
 }
 
+function hasPotentialVideo(article: HTMLElement): boolean {
+  return Boolean(
+    article.querySelector(
+      'video, a[href*="/video/"], [data-testid="videoPlayer"], img[src*="video_thumb"], img[src*="amplify_video_thumb"], img[src*="tweet_video_thumb"]'
+    )
+  );
+}
+
 function findStatusLink(article: HTMLElement): string | null {
   const links = Array.from(article.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]'));
   const statusLink = links.find((link) => /\/[^/]+\/status\/\d+/.test(link.getAttribute('href') || ''));
@@ -394,6 +447,25 @@ async function sendDownloadMessage(message: DownloadImagesMessage): Promise<{
         return;
       }
       resolve(response || {});
+    });
+  });
+}
+
+async function sendXTweetMediaMessage(postId: string): Promise<XTweetMedia[]> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: 'GET_X_TWEET_MEDIA',
+      postId,
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (response?.error) {
+        reject(new Error(response.error));
+        return;
+      }
+      resolve(Array.isArray(response?.media) ? response.media : []);
     });
   });
 }
