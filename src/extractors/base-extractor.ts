@@ -26,13 +26,29 @@ export abstract class BaseExtractor {
   abstract extractMetadata(): ImageMetadata;
 
   protected async getImageDimensions(
-    url: string
+    url: string,
+    timeoutMs = 3000
   ): Promise<{ width: number; height: number } | null> {
     return new Promise((resolve) => {
       const img = new Image();
-      img.onload = () =>
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        img.onload = null;
+        img.onerror = null;
+      };
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+
+      img.onload = () => {
+        cleanup();
         resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => resolve(null);
+      };
+      img.onerror = () => {
+        cleanup();
+        resolve(null);
+      };
       img.src = url;
     });
   }

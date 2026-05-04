@@ -1,5 +1,6 @@
 import { getExtractor, detectSite } from '../extractors';
 import { filterImages } from '../utils/image-filter';
+import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
 import { initOverlay } from './overlay';
@@ -43,6 +44,14 @@ async function extractAndFilter(): Promise<{
   }
 
   const settings = await getSettingsFromBackground();
+  if (settings.scanScrollEnabled === true) {
+    await autoScrollToLoadAll({
+      scrollDelay: 350,
+      scrollStep: Math.max(window.innerHeight * 0.85, 600),
+      maxScrolls: 40,
+    });
+  }
+
   const images = await extractor.extractImages();
   const filterResult = filterImages(images, settings);
   const metadata = extractor.extractMetadata();

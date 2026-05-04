@@ -1,6 +1,7 @@
 import { DownloadImagesMessage } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
-import { generateFilename, generateBasePrefix, generateCustomFilename, generateCustomBasePrefix, findNextIndex } from '../utils/filename-template';
+import { generateFilename, generateBasePrefix, findNextIndex } from '../utils/filename-template';
+import { getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 
 // メッセージリスナー
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -38,10 +39,13 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
   failed: number;
   errors: string[];
 }> {
-  const { images, settings, customName } = message;
+  const { images, customName } = message;
+  const settings = normalizeSettings(message.settings);
   let success = 0;
   let failed = 0;
   const errors: string[] = [];
+  const startIndexes = new Map<string, number>();
+  const attemptedCounts = new Map<string, number>();
 
   for (let i = 0; i < images.length; i++) {
     const image = images[i];
@@ -49,25 +53,21 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
     let basePrefix: string;
     let filename: string;
 
-    // カスタム名モードとテンプレートモードで分岐
-    if (settings.namingMode === 'custom' && customName) {
-      // カスタム名モード: {date}_{customName}_{index}.{ext}
-      basePrefix = generateCustomBasePrefix(customName, image);
-      const nextIndex = await findNextIndex(basePrefix, settings.downloadFolder);
-      filename = generateCustomFilename(customName, image, nextIndex);
-    } else {
-      // テンプレートモード: 従来の処理
-      basePrefix = generateBasePrefix(settings.filenameTemplate, image);
-      const nextIndex = await findNextIndex(basePrefix, settings.downloadFolder);
-      filename = generateFilename(settings.filenameTemplate, image, nextIndex);
-    }
+    const activeRuleId = settings.activeRuleId || 'generic';
+    const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
+
+    basePrefix = generateBasePrefix(selectedFilenamePreset.template, image, customName || '');
+    const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
+    filename = generateFilename(selectedFilenamePreset.template, image, nextIndex, customName || '');
+
+    attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
 
     try {
       const downloadPath = settings.downloadFolder
         ? `${settings.downloadFolder}/${filename}`
         : filename;
 
-      await downloadFile(image.url, downloadPath);
+      await downloadFileWithRetry(image.url, downloadPath);
       success++;
 
       // 進捗通知
@@ -86,6 +86,41 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
   return { success, failed, errors };
 }
 
+async function getNextBatchIndex(
+  basePrefix: string,
+  downloadFolder: string,
+  startIndexes: Map<string, number>,
+  attemptedCounts: Map<string, number>
+): Promise<number> {
+  if (!startIndexes.has(basePrefix)) {
+    startIndexes.set(basePrefix, await findNextIndex(basePrefix, downloadFolder));
+  }
+
+  return startIndexes.get(basePrefix)! + (attemptedCounts.get(basePrefix) || 0);
+}
+
+async function downloadFileWithRetry(
+  url: string,
+  filename: string,
+  retries = 2
+): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await downloadFile(url, filename);
+      return;
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < retries) {
+        await sleep(1000 * (attempt + 1));
+      }
+    }
+  }
+
+  throw lastError || new Error('Download failed');
+}
+
 function downloadFile(url: string, filename: string): Promise<void> {
   return new Promise((resolve, reject) => {
     chrome.downloads.download(
@@ -100,19 +135,51 @@ function downloadFile(url: string, filename: string): Promise<void> {
         } else if (downloadId === undefined) {
           reject(new Error('Download failed'));
         } else {
+          let settled = false;
+
+          const cleanup = () => {
+            chrome.downloads.onChanged.removeListener(listener);
+            clearTimeout(timeoutId);
+          };
+
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          };
+
           // ダウンロード完了を待つ
           const listener = (delta: chrome.downloads.DownloadDelta) => {
             if (delta.id === downloadId && delta.state) {
               if (delta.state.current === 'complete') {
-                chrome.downloads.onChanged.removeListener(listener);
-                resolve();
+                finish();
               } else if (delta.state.current === 'interrupted') {
-                chrome.downloads.onChanged.removeListener(listener);
-                reject(new Error(delta.error?.current || 'Download interrupted'));
+                finish(new Error(delta.error?.current || 'Download interrupted'));
               }
             }
           };
+
+          const timeoutId = setTimeout(() => {
+            finish(new Error('Download timed out'));
+          }, 120000);
+
           chrome.downloads.onChanged.addListener(listener);
+
+          chrome.downloads.search({ id: downloadId }, (items) => {
+            const item = items?.[0];
+            if (!item) return;
+
+            if (item.state === 'complete') {
+              finish();
+            } else if (item.state === 'interrupted') {
+              finish(new Error(item.error || 'Download interrupted'));
+            }
+          });
         }
       }
     );
@@ -142,9 +209,9 @@ async function getSettings(): Promise<Settings> {
   return new Promise((resolve) => {
     chrome.storage.sync.get('settings', (result) => {
       if (result.settings) {
-        resolve({ ...DEFAULT_SETTINGS, ...result.settings });
+        resolve(normalizeSettings(result.settings));
       } else {
-        resolve(DEFAULT_SETTINGS);
+        resolve(normalizeSettings(DEFAULT_SETTINGS));
       }
     });
   });
@@ -152,7 +219,7 @@ async function getSettings(): Promise<Settings> {
 
 async function saveSettings(settings: Settings): Promise<void> {
   return new Promise((resolve) => {
-    chrome.storage.sync.set({ settings }, () => {
+    chrome.storage.sync.set({ settings: normalizeSettings(settings) }, () => {
       resolve();
     });
   });

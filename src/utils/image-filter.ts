@@ -34,15 +34,12 @@ function checkImage(
   settings: Settings
 ): { pass: boolean; reason: string } {
   // サイズチェック
-  if (settings.minWidth > 0 && image.width !== null) {
+  if (settings.minWidth > 0) {
+    if (image.width === null) {
+      return { pass: false, reason: '幅が不明' };
+    }
     if (image.width < settings.minWidth) {
       return { pass: false, reason: `幅が${settings.minWidth}px未満` };
-    }
-  }
-
-  if (settings.minHeight > 0 && image.height !== null) {
-    if (image.height < settings.minHeight) {
-      return { pass: false, reason: `高さが${settings.minHeight}px未満` };
     }
   }
 

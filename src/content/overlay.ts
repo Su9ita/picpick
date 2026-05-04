@@ -1,13 +1,18 @@
 // オーバーレイUIを作成・管理
 import { getExtractor, detectSite } from '../extractors';
 import { filterImages } from '../utils/image-filter';
-import { Settings, DEFAULT_SETTINGS, SizePreset, DEFAULT_SIZE_PRESETS, RuleSessionSettings } from '../types/settings';
+import { autoScrollToLoadAll } from '../utils/auto-scroller';
+import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
+import { getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 
 let overlayContainer: HTMLDivElement | null = null;
 let isDownloading = false;
 let scannedImages: ImageInfo[] = [];
 let currentSettings: Settings = { ...DEFAULT_SETTINGS };
+let suppressNextOverlayClick = false;
+
+const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 
 // 対応サイトかチェックしてオーバーレイを表示
 export async function initOverlay(): Promise<void> {
@@ -50,16 +55,25 @@ function createOverlay(): void {
         border-radius: 50%;
         background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
         border: none;
-        cursor: pointer;
+        cursor: grab;
         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
         display: flex;
         align-items: center;
         justify-content: center;
         transition: all 0.2s ease;
+        touch-action: none;
+        user-select: none;
+      }
+      #picpick-btn.picpick-dragging {
+        cursor: grabbing;
+        transform: scale(1.05);
       }
       #picpick-btn:hover {
         transform: scale(1.1);
         box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+      }
+      #picpick-btn.picpick-dragging:hover {
+        transform: scale(1.05);
       }
       #picpick-btn:disabled {
         background: #9ca3af;
@@ -421,7 +435,7 @@ function createOverlay(): void {
         background: #059669;
       }
     </style>
-    <button id="picpick-btn" title="画像をスキャン">
+    <button id="picpick-btn" title="画像をスキャン / ドラッグで移動">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
       </svg>
@@ -449,23 +463,14 @@ function createOverlay(): void {
           </select>
         </div>
 
-        <!-- カスタム名モード -->
+        <!-- 保存名プリセット -->
         <div class="picpick-naming-section">
-          <div class="picpick-mode-toggle">
-            <label class="picpick-toggle-label">
-              <input type="radio" name="picpick-naming-mode" value="custom" id="picpick-mode-custom" checked>
-              <span>カスタム名</span>
-            </label>
-            <label class="picpick-toggle-label">
-              <input type="radio" name="picpick-naming-mode" value="template" id="picpick-mode-template">
-              <span>テンプレート</span>
-            </label>
+          <div style="margin-bottom: 8px;">
+            <label style="display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 4px;">保存名プリセット</label>
+            <select id="picpick-filename-preset-select" class="picpick-preset-select"></select>
           </div>
           <div id="picpick-custom-name-section" class="picpick-custom-name-section">
             <div class="picpick-custom-name-row">
-              <select id="picpick-custom-template-select" class="picpick-template-dropdown">
-                <option value="">-- 選択 --</option>
-              </select>
               <input type="text" id="picpick-custom-name" placeholder="ファイル名を入力" class="picpick-custom-input">
             </div>
             <div class="picpick-preview">
@@ -478,12 +483,8 @@ function createOverlay(): void {
         </select>
         <div class="picpick-size-inputs">
           <div class="picpick-size-input">
-            <label>最小幅 (px)</label>
-            <input type="number" id="picpick-min-width" min="0" value="400">
-          </div>
-          <div class="picpick-size-input">
-            <label>最小高さ (px)</label>
-            <input type="number" id="picpick-min-height" min="0" value="400">
+            <label>最小横幅 (px)</label>
+            <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
         </div>
         <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
@@ -495,18 +496,18 @@ function createOverlay(): void {
           </summary>
           <div class="picpick-settings-content">
             <div class="picpick-setting-item">
-              <label>ファイル名テンプレート</label>
+              <label>保存名プリセットのテンプレート</label>
               <input type="text" id="picpick-filename-template" value="{date}_{title}_{index}">
             </div>
             <div class="picpick-setting-item">
               <label>保存フォルダ</label>
-              <input type="text" id="picpick-download-folder" value="PicPick">
+              <input type="text" id="picpick-download-folder" value="picpick">
             </div>
             <div class="picpick-setting-item">
-              <label>カスタム名テンプレート</label>
+              <label>このルールの保存名プリセット</label>
               <div id="picpick-custom-template-list" class="picpick-template-list"></div>
               <div class="picpick-template-add">
-                <input type="text" id="picpick-new-template" placeholder="テンプレート名">
+                <input type="text" id="picpick-new-template" placeholder="表示名">
                 <button id="picpick-add-template" class="picpick-btn-small">追加</button>
               </div>
             </div>
@@ -523,16 +524,27 @@ function createOverlay(): void {
   `;
 
   document.body.appendChild(overlayContainer);
+  restoreOverlayPosition();
 
   const btn = document.getElementById('picpick-btn');
-  btn?.addEventListener('click', handleScanClick);
+  if (btn) {
+    setupDraggableOverlay(btn);
+    btn.addEventListener('click', (event) => {
+      if (suppressNextOverlayClick) {
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextOverlayClick = false;
+        return;
+      }
+      handleScanClick();
+    });
+  }
 
   // 確認ダイアログのイベント
   const cancelBtn = document.getElementById('picpick-cancel-btn');
   const confirmBtn = document.getElementById('picpick-confirm-btn');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
 
   const rescanBtn = document.getElementById('picpick-rescan-btn');
 
@@ -544,7 +556,6 @@ function createOverlay(): void {
     const selectedPreset = currentSettings.sizePresets.find(p => p.name === presetSelect.value);
     if (selectedPreset) {
       minWidthInput.value = String(selectedPreset.minWidth);
-      minHeightInput.value = String(selectedPreset.minHeight);
     }
     updateFilteredCount();
   });
@@ -554,18 +565,10 @@ function createOverlay(): void {
     updateFilteredCount();
   });
 
-  minHeightInput?.addEventListener('input', () => {
-    presetSelect.value = '';
-    updateFilteredCount();
-  });
-
   // カスタム名モードのイベント
-  const modeCustomRadio = document.getElementById('picpick-mode-custom') as HTMLInputElement;
-  const modeTemplateRadio = document.getElementById('picpick-mode-template') as HTMLInputElement;
   const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
   const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
-  const customTemplateSelect = document.getElementById('picpick-custom-template-select') as HTMLSelectElement;
-  const filenamePreview = document.getElementById('picpick-filename-preview') as HTMLSpanElement;
+  const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
 
   // 設定パネルのイベント
   const filenameTemplateInput = document.getElementById('picpick-filename-template') as HTMLInputElement;
@@ -575,23 +578,22 @@ function createOverlay(): void {
   const addTemplateBtn = document.getElementById('picpick-add-template') as HTMLButtonElement;
   const saveSettingsBtn = document.getElementById('picpick-save-settings') as HTMLButtonElement;
 
-  // モード切替
-  modeCustomRadio?.addEventListener('change', () => {
-    customNameSection.style.display = 'block';
-    currentSettings.namingMode = 'custom';
-  });
-
-  modeTemplateRadio?.addEventListener('change', () => {
-    customNameSection.style.display = 'none';
-    currentSettings.namingMode = 'template';
-  });
-
-  // テンプレート選択
-  customTemplateSelect?.addEventListener('change', () => {
-    if (customTemplateSelect.value) {
-      customNameInput.value = customTemplateSelect.value;
-      updateOverlayFilenamePreview();
+  filenamePresetSelect?.addEventListener('change', () => {
+    const ruleId = currentSettings.activeRuleId || 'generic';
+    if (!currentSettings.ruleSessionSettings) currentSettings.ruleSessionSettings = {};
+    if (!currentSettings.ruleSessionSettings[ruleId]) {
+      currentSettings.ruleSessionSettings[ruleId] = {} as RuleSessionSettings;
     }
+    currentSettings.ruleSessionSettings[ruleId] = {
+      ...currentSettings.ruleSessionSettings[ruleId],
+      selectedFilenamePresetId: filenamePresetSelect.value,
+      namingMode: getSelectedFilenamePreset(currentSettings, ruleId).template.includes('{custom}') ? 'custom' : 'template',
+      customName: customNameInput?.value || '',
+      selectedPreset: (document.getElementById('picpick-preset-select') as HTMLSelectElement)?.value || '',
+    };
+    currentSettings.namingMode = currentSettings.ruleSessionSettings[ruleId]!.namingMode;
+    updateCustomNameVisibility();
+    updateOverlayFilenamePreview();
   });
 
   // カスタム名入力
@@ -599,13 +601,33 @@ function createOverlay(): void {
 
   // テンプレート追加
   addTemplateBtn?.addEventListener('click', () => {
-    const name = newTemplateInput?.value.trim();
-    if (name && !currentSettings.customNameTemplates.includes(name)) {
-      currentSettings.customNameTemplates.push(name);
-      newTemplateInput.value = '';
-      renderOverlayCustomTemplates();
-      updateOverlayCustomTemplateSelect();
-    }
+    const label = newTemplateInput?.value.trim();
+    const template = filenameTemplateInput?.value.trim();
+    const ruleId = currentSettings.activeRuleId || 'generic';
+    if (!label || !template) return;
+
+    if (!currentSettings.ruleFilenamePresets) currentSettings.ruleFilenamePresets = {};
+    if (!currentSettings.ruleFilenamePresets[ruleId]) currentSettings.ruleFilenamePresets[ruleId] = [];
+    if (currentSettings.ruleFilenamePresets[ruleId].some((preset) => preset.label === label || preset.template === template)) return;
+
+    const filenamePreset = {
+      id: `overlay-${Date.now()}`,
+      label,
+      template,
+    };
+    currentSettings.ruleFilenamePresets[ruleId].push(filenamePreset);
+    if (!currentSettings.ruleSessionSettings) currentSettings.ruleSessionSettings = {};
+    currentSettings.ruleSessionSettings[ruleId] = {
+      ...(currentSettings.ruleSessionSettings[ruleId] || {} as RuleSessionSettings),
+      selectedFilenamePresetId: filenamePreset.id,
+      namingMode: template.includes('{custom}') ? 'custom' : 'template',
+      customName: customNameInput?.value || '',
+      selectedPreset: presetSelect?.value || '',
+    };
+    currentSettings.namingMode = currentSettings.ruleSessionSettings[ruleId]!.namingMode;
+    newTemplateInput.value = '';
+    renderOverlayCustomTemplates();
+    updateFilenamePresetDropdown();
   });
 
   // 設定保存
@@ -615,6 +637,7 @@ function createOverlay(): void {
 
     if (isExtensionContextValid()) {
       try {
+        currentSettings = normalizeSettings(currentSettings);
         await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: currentSettings });
         saveSettingsBtn.textContent = '保存しました!';
         setTimeout(() => {
@@ -644,13 +667,17 @@ async function handleScanClick(): Promise<void> {
   statusText.textContent = 'スキャン中...';
 
   try {
-    // 画像を抽出
     const url = window.location.href;
     const extractor = getExtractor(url);
     if (!extractor) throw new Error('非対応サイト');
 
-    scannedImages = await extractor.extractImages();
     currentSettings = await getSettings();
+    await scrollBeforeScanIfEnabled(currentSettings, (current, total) => {
+      statusText.textContent = `スクロール中... ${current}/${total}`;
+    });
+
+    // 画像を抽出
+    scannedImages = await extractor.extractImages();
 
     if (scannedImages.length === 0) {
       statusText.textContent = '画像が見つかりませんでした';
@@ -685,6 +712,8 @@ async function handleRescan(): Promise<void> {
     const extractor = getExtractor(url);
     if (!extractor) throw new Error('非対応サイト');
 
+    currentSettings = await getSettings();
+    await scrollBeforeScanIfEnabled(currentSettings);
     scannedImages = await extractor.extractImages();
     updateFilteredCount();
 
@@ -696,16 +725,139 @@ async function handleRescan(): Promise<void> {
   }
 }
 
+function setupDraggableOverlay(btn: HTMLElement): void {
+  let pointerId: number | null = null;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let hasMoved = false;
+
+  btn.addEventListener('pointerdown', (event) => {
+    if (!overlayContainer || event.button !== 0 || isDownloading) return;
+
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+
+    const rect = overlayContainer.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+    hasMoved = false;
+
+    btn.classList.add('picpick-dragging');
+    btn.setPointerCapture(pointerId);
+  });
+
+  btn.addEventListener('pointermove', (event) => {
+    if (!overlayContainer || pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - startX;
+    const deltaY = event.clientY - startY;
+
+    if (!hasMoved && Math.hypot(deltaX, deltaY) < 4) return;
+    hasMoved = true;
+    suppressNextOverlayClick = true;
+
+    const position = clampOverlayPosition(startLeft + deltaX, startTop + deltaY);
+    applyOverlayPosition(position.left, position.top);
+  });
+
+  btn.addEventListener('pointerup', (event) => {
+    if (pointerId !== event.pointerId) return;
+
+    btn.classList.remove('picpick-dragging');
+    if (hasMoved && overlayContainer) {
+      const rect = overlayContainer.getBoundingClientRect();
+      saveOverlayPosition(rect.left, rect.top);
+    }
+    pointerId = null;
+  });
+
+  btn.addEventListener('pointercancel', (event) => {
+    if (pointerId !== event.pointerId) return;
+    btn.classList.remove('picpick-dragging');
+    pointerId = null;
+  });
+}
+
+function clampOverlayPosition(left: number, top: number): { left: number; top: number } {
+  const margin = 8;
+  const overlayWidth = overlayContainer?.offsetWidth || 44;
+  const overlayHeight = overlayContainer?.offsetHeight || 44;
+  const maxLeft = Math.max(margin, window.innerWidth - overlayWidth - margin);
+  const maxTop = Math.max(margin, window.innerHeight - overlayHeight - margin);
+
+  return {
+    left: Math.min(Math.max(left, margin), maxLeft),
+    top: Math.min(Math.max(top, margin), maxTop),
+  };
+}
+
+function applyOverlayPosition(left: number, top: number): void {
+  if (!overlayContainer) return;
+
+  const position = clampOverlayPosition(left, top);
+  overlayContainer.style.left = `${position.left}px`;
+  overlayContainer.style.top = `${position.top}px`;
+  overlayContainer.style.right = 'auto';
+}
+
+function restoreOverlayPosition(): void {
+  if (!isExtensionContextValid()) return;
+
+  try {
+    chrome.storage.sync.get(OVERLAY_POSITION_KEY, (result) => {
+      const position = result?.[OVERLAY_POSITION_KEY];
+      if (
+        position &&
+        typeof position.left === 'number' &&
+        typeof position.top === 'number'
+      ) {
+        applyOverlayPosition(position.left, position.top);
+      }
+    });
+  } catch {
+    // 位置の復元に失敗した場合はデフォルト位置を使う
+  }
+}
+
+function saveOverlayPosition(left: number, top: number): void {
+  if (!isExtensionContextValid()) return;
+
+  const position = clampOverlayPosition(left, top);
+  try {
+    chrome.storage.sync.set({
+      [OVERLAY_POSITION_KEY]: position,
+    });
+  } catch {
+    // 位置保存に失敗してもスキャン機能には影響させない
+  }
+}
+
+async function scrollBeforeScanIfEnabled(
+  settings: Settings,
+  onProgress?: (current: number, total: number) => void
+): Promise<void> {
+  if (settings.scanScrollEnabled !== true) return;
+
+  await autoScrollToLoadAll({
+    scrollDelay: 350,
+    scrollStep: Math.max(window.innerHeight * 0.85, 600),
+    maxScrolls: 40,
+    onProgress,
+  });
+}
+
 // 確認ダイアログを表示
 function showConfirmDialog(): void {
   const dialog = document.getElementById('picpick-confirm-dialog');
   const countEl = document.getElementById('picpick-dialog-count');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
   const ruleSelect = document.getElementById('picpick-rule-select') as HTMLSelectElement;
 
-  if (!dialog || !countEl || !presetSelect || !minWidthInput || !minHeightInput) return;
+  if (!dialog || !countEl || !presetSelect || !minWidthInput) return;
 
   // 【新規】サイトルール選択肢を初期化
   if (ruleSelect) {
@@ -738,10 +890,10 @@ function showConfirmDialog(): void {
     presetSelect.value = currentSettings.selectedPreset;
   }
   minWidthInput.value = String(currentSettings.minWidth);
-  minHeightInput.value = String(currentSettings.minHeight);
 
   updateFilteredCount();
   initOverlayNamingMode();
+  updateFilenamePresetDropdown();
   dialog.classList.add('show');
 }
 
@@ -757,7 +909,7 @@ function updatePresetDropdown(): void {
   for (const preset of currentSettings.sizePresets || []) {
     const option = document.createElement('option');
     option.value = preset.name;
-    option.textContent = preset.name;
+    option.textContent = `${preset.minWidth}px`;
     presetSelect.appendChild(option);
   }
 
@@ -770,7 +922,7 @@ function updatePresetDropdown(): void {
     for (const preset of rulePresets) {
       const option = document.createElement('option');
       option.value = preset.name;
-      option.textContent = preset.name;
+      option.textContent = `${preset.minWidth}px`;
       optgroup.appendChild(option);
     }
     presetSelect.appendChild(optgroup);
@@ -784,7 +936,11 @@ function switchRule(ruleId: string): void {
     const customName = (document.getElementById('picpick-custom-name') as HTMLInputElement)?.value || '';
     const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
     const selectedPreset = presetSelect?.value || '';
-    const namingMode = (document.querySelector('input[name="picpick-naming-mode"]:checked') as HTMLInputElement)?.value || 'custom';
+    const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
+    const selectedFilenamePresetId = filenamePresetSelect?.value;
+    const selectedFilenamePreset = getRuleFilenamePresets(currentSettings, currentSettings.activeRuleId)
+      .find((preset) => preset.id === selectedFilenamePresetId);
+    const namingMode = selectedFilenamePreset?.template.includes('{custom}') ? 'custom' : 'template';
 
     if (!currentSettings.ruleSessionSettings[currentSettings.activeRuleId]) {
       currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {} as RuleSessionSettings;
@@ -792,7 +948,8 @@ function switchRule(ruleId: string): void {
     currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {
       customName,
       selectedPreset,
-      namingMode: namingMode as 'custom' | 'template',
+      namingMode,
+      selectedFilenamePresetId,
     };
   }
 
@@ -801,24 +958,16 @@ function switchRule(ruleId: string): void {
 
   // プリセットドロップダウンを更新
   updatePresetDropdown();
+  updateFilenamePresetDropdown();
 
   // 新しいルールの設定を復元
   const ruleSetting = currentSettings.ruleSessionSettings?.[ruleId];
   if (ruleSetting) {
     const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
     const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
-    const modeCustom = document.getElementById('picpick-mode-custom') as HTMLInputElement;
-    const modeTemplate = document.getElementById('picpick-mode-template') as HTMLInputElement;
 
     if (customNameInput) customNameInput.value = ruleSetting.customName;
     if (presetSelect) presetSelect.value = ruleSetting.selectedPreset;
-    if (modeCustom && modeTemplate) {
-      if (ruleSetting.namingMode === 'custom') {
-        modeCustom.checked = true;
-      } else {
-        modeTemplate.checked = true;
-      }
-    }
 
     // UIを更新
     updateFilteredCount();
@@ -835,17 +984,16 @@ function hideConfirmDialog(): void {
 // フィルター後の枚数を更新
 function updateFilteredCount(): void {
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
   const countEl = document.getElementById('picpick-dialog-count');
   const scannedEl = document.getElementById('picpick-dialog-scanned');
   const imageListEl = document.getElementById('picpick-image-list');
 
-  if (!minWidthInput || !minHeightInput || !countEl || !scannedEl || !imageListEl) return;
+  if (!minWidthInput || !countEl || !scannedEl || !imageListEl) return;
 
   const tempSettings: Settings = {
     ...currentSettings,
     minWidth: parseInt(minWidthInput.value) || 0,
-    minHeight: parseInt(minHeightInput.value) || 0,
+    minHeight: 0,
   };
 
   const filterResult = filterImages(scannedImages, tempSettings);
@@ -891,60 +1039,71 @@ function renderOverlayCustomTemplates(): void {
   const list = document.getElementById('picpick-custom-template-list');
   if (!list) return;
 
-  if (currentSettings.customNameTemplates.length === 0) {
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const presets = getRuleFilenamePresets(currentSettings, ruleId);
+
+  if (presets.length === 0) {
     list.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
     return;
   }
 
-  list.innerHTML = currentSettings.customNameTemplates
-    .map((name, i) => '<div class="picpick-template-item"><span>' + name + '</span><button data-index="' + i + '">×</button></div>')
+  list.innerHTML = presets
+    .map((preset, i) => '<div class="picpick-template-item"><span>' + preset.label + '</span><button data-index="' + i + '"' + (preset.id === 'default' || preset.id === 'manual' ? ' disabled' : '') + '>×</button></div>')
     .join('');
 
   list.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const index = parseInt((e.target as HTMLElement).dataset.index || '0');
-      currentSettings.customNameTemplates.splice(index, 1);
+      const targetPresets = currentSettings.ruleFilenamePresets?.[ruleId];
+      if (!targetPresets || targetPresets[index]?.id === 'default' || targetPresets[index]?.id === 'manual') return;
+      targetPresets.splice(index, 1);
       renderOverlayCustomTemplates();
-      updateOverlayCustomTemplateSelect();
+      updateFilenamePresetDropdown();
     });
   });
 }
 
-// オーバーレイのカスタム名テンプレート選択を更新
-function updateOverlayCustomTemplateSelect(): void {
-  const select = document.getElementById('picpick-custom-template-select') as HTMLSelectElement;
+function updateFilenamePresetDropdown(): void {
+  const select = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
   if (!select) return;
 
-  select.innerHTML = '<option value="">-- 選択 --</option>';
-  currentSettings.customNameTemplates.forEach(name => {
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const presets = getRuleFilenamePresets(currentSettings, ruleId);
+  const selectedId = currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id || '';
+
+  select.innerHTML = '';
+  presets.forEach(preset => {
     const option = document.createElement('option');
-    option.value = name;
-    option.textContent = name;
+    option.value = preset.id;
+    option.textContent = `${preset.label} - ${preset.template}`;
     select.appendChild(option);
   });
+
+  select.value = selectedId;
+  updateCustomNameVisibility();
+}
+
+function updateCustomNameVisibility(): void {
+  const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const preset = getSelectedFilenamePreset(currentSettings, ruleId);
+  if (customNameSection) {
+    customNameSection.style.display = preset.template.includes('{custom}') ? 'block' : 'none';
+  }
 }
 
 // オーバーレイのカスタム名モードを初期化
 function initOverlayNamingMode(): void {
-  const modeCustomRadio = document.getElementById('picpick-mode-custom') as HTMLInputElement;
-  const modeTemplateRadio = document.getElementById('picpick-mode-template') as HTMLInputElement;
-  const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
   const filenameTemplateInput = document.getElementById('picpick-filename-template') as HTMLInputElement;
   const downloadFolderInput = document.getElementById('picpick-download-folder') as HTMLInputElement;
 
-  if (currentSettings.namingMode === 'template') {
-    if (modeTemplateRadio) modeTemplateRadio.checked = true;
-    if (customNameSection) customNameSection.style.display = 'none';
-  } else {
-    if (modeCustomRadio) modeCustomRadio.checked = true;
-    if (customNameSection) customNameSection.style.display = 'block';
-  }
+  updateCustomNameVisibility();
 
   if (filenameTemplateInput) filenameTemplateInput.value = currentSettings.filenameTemplate;
   if (downloadFolderInput) downloadFolderInput.value = currentSettings.downloadFolder;
 
   renderOverlayCustomTemplates();
-  updateOverlayCustomTemplateSelect();
+  updateFilenamePresetDropdown();
   updateOverlayFilenamePreview();
 }
 
@@ -958,16 +1117,19 @@ async function handleConfirmDownload(): Promise<void> {
   const progressBar = document.getElementById('picpick-progress-bar');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
 
-  if (!btn || !status || !statusText || !progressBar || !minWidthInput || !minHeightInput) return;
+  if (!btn || !status || !statusText || !progressBar || !minWidthInput) return;
 
   // 【新規】ダウンロード前にルール設定を保存
   if (currentSettings.activeRuleId && currentSettings.ruleSessionSettings) {
     const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
+    const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
     const customName = customNameInput?.value || '';
     const selectedPreset = presetSelect?.value || '';
-    const namingMode = (document.querySelector('input[name="picpick-naming-mode"]:checked') as HTMLInputElement)?.value || 'custom';
+    const selectedFilenamePresetId = filenamePresetSelect?.value;
+    const selectedFilenamePreset = getRuleFilenamePresets(currentSettings, currentSettings.activeRuleId)
+      .find((preset) => preset.id === selectedFilenamePresetId);
+    const namingMode = selectedFilenamePreset?.template.includes('{custom}') ? 'custom' : 'template';
 
     if (!currentSettings.ruleSessionSettings[currentSettings.activeRuleId]) {
       currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {} as RuleSessionSettings;
@@ -975,8 +1137,10 @@ async function handleConfirmDownload(): Promise<void> {
     currentSettings.ruleSessionSettings[currentSettings.activeRuleId] = {
       customName,
       selectedPreset,
-      namingMode: namingMode as 'custom' | 'template',
+      namingMode,
+      selectedFilenamePresetId,
     };
+    currentSettings.namingMode = namingMode;
   }
 
   hideConfirmDialog();
@@ -987,12 +1151,12 @@ async function handleConfirmDownload(): Promise<void> {
   status.classList.add('show');
 
   // 設定を更新
-  const settings: Settings = {
+  const settings: Settings = normalizeSettings({
     ...currentSettings,
     minWidth: parseInt(minWidthInput.value) || 0,
-    minHeight: parseInt(minHeightInput.value) || 0,
+    minHeight: 0,
     selectedPreset: presetSelect?.value || '',
-  };
+  });
 
   // 設定を保存（エラーは無視）
   if (isExtensionContextValid()) {
@@ -1023,11 +1187,8 @@ async function handleConfirmDownload(): Promise<void> {
 
     const result = await new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
       try {
-        // カスタム名モードの場合はcustomNameを送信
         const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
-        const customName = settings.namingMode === 'custom'
-          ? customNameInput?.value.trim()
-          : undefined;
+        const customName = customNameInput?.value.trim() || undefined;
 
         chrome.runtime.sendMessage({
           type: 'DOWNLOAD_IMAGES',
@@ -1106,21 +1267,9 @@ async function getSettings(): Promise<Settings> {
           return;
         }
         if (response && !response.error) {
-          // 保存されたプリセットがある場合、それをベースにする
-          const savedPresets = response.sizePresets || [];
-          // デフォルトプリセットのうち、保存されていないものを追加
-          const savedPresetNames = new Set(savedPresets.map((p: SizePreset) => p.name));
-          const newPresets = DEFAULT_SIZE_PRESETS.filter((p: SizePreset) => !savedPresetNames.has(p.name));
-          const mergedPresets = [...savedPresets, ...newPresets];
-
-          const mergedSettings: Settings = {
-            ...DEFAULT_SETTINGS,
-            ...response,
-            sizePresets: mergedPresets,
-          };
-          resolve(mergedSettings);
+          resolve(normalizeSettings(response));
         } else {
-          resolve(DEFAULT_SETTINGS);
+          resolve(normalizeSettings(DEFAULT_SETTINGS));
         }
       });
     } catch (error) {

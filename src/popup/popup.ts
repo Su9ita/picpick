@@ -1,466 +1,332 @@
-import { Settings, DEFAULT_SETTINGS, SizePreset, DEFAULT_SIZE_PRESETS } from '../types/settings';
+import { DEFAULT_SETTINGS, FilenamePreset, Settings, SizePreset } from '../types/settings';
+import { SiteRule } from '../types/site-rules';
+import { getRuleFilenamePresets, normalizeSettings } from '../utils/settings-normalizer';
 
-let currentSettings: Settings = { ...DEFAULT_SETTINGS };
+let currentSettings: Settings = normalizeSettings(DEFAULT_SETTINGS);
 
-// ルールIDの定義
-const RULE_IDS = ['patreon', 'pixiv_fanbox', 'generic'] as const;
-type RuleId = typeof RULE_IDS[number];
-
-// HTML IDとルールIDのマッピング
-const HTML_TO_RULE_ID: { [key: string]: RuleId } = {
-  'patreon': 'patreon',
-  'fanbox': 'pixiv_fanbox',
-  'generic': 'generic',
-};
-
-// DOM要素
-const filenameTemplateInput = document.getElementById('filename-template') as HTMLInputElement;
-const downloadFolderInput = document.getElementById('download-folder') as HTMLInputElement;
-const saveGlobalSettingsBtn = document.getElementById('save-global-settings') as HTMLButtonElement;
-const status = document.getElementById('status') as HTMLParagraphElement;
-const overlayEnabledCheckbox = document.getElementById('overlay-enabled') as HTMLInputElement;
-
-// タブナビゲーション要素
 const tabButtons = document.querySelectorAll('.tab-btn') as NodeListOf<HTMLButtonElement>;
 const tabContents = document.querySelectorAll('.tab-content') as NodeListOf<HTMLElement>;
 
-// グローバルテンプレート/プリセット要素
-const customTemplateList = document.getElementById('custom-template-list') as HTMLDivElement;
-const newTemplateInput = document.getElementById('new-template') as HTMLInputElement;
-const addCustomTemplateBtn = document.getElementById('add-custom-template') as HTMLButtonElement;
-const sizePresetList = document.getElementById('size-preset-list') as HTMLDivElement;
-const newPresetNameInput = document.getElementById('new-preset-name') as HTMLInputElement;
-const newPresetWidthInput = document.getElementById('new-preset-width') as HTMLInputElement;
-const newPresetHeightInput = document.getElementById('new-preset-height') as HTMLInputElement;
-const addSizePresetBtn = document.getElementById('add-size-preset') as HTMLButtonElement;
+const activeRuleSelect = document.getElementById('active-rule') as HTMLSelectElement;
+const ruleDescription = document.getElementById('rule-description') as HTMLElement;
+const ruleVariables = document.getElementById('rule-variables') as HTMLDivElement;
+const filenamePresetList = document.getElementById('filename-preset-list') as HTMLDivElement;
+const newFilenamePresetLabel = document.getElementById('new-filename-preset-label') as HTMLInputElement;
+const newFilenamePresetTemplate = document.getElementById('new-filename-preset-template') as HTMLInputElement;
+const addFilenamePresetBtn = document.getElementById('add-filename-preset') as HTMLButtonElement;
 
-// 初期化
+const downloadFolderInput = document.getElementById('download-folder') as HTMLInputElement;
+const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled') as HTMLInputElement;
+const saveGlobalSettingsBtn = document.getElementById('save-global-settings') as HTMLButtonElement;
+const overlayEnabledCheckbox = document.getElementById('overlay-enabled') as HTMLInputElement;
+
+const sizePresetList = document.getElementById('size-preset-list') as HTMLDivElement;
+const newPresetWidthInput = document.getElementById('new-preset-width') as HTMLInputElement;
+const addSizePresetBtn = document.getElementById('add-size-preset') as HTMLButtonElement;
+const status = document.getElementById('status') as HTMLParagraphElement;
+
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
   initTabNavigation();
-  initGlobalTemplateManagement();
-  initGlobalPresetManagement();
-  initRuleManagement();
-  initOverlayToggle();
+  initRuleEditor();
+  initGlobalSettings();
+  initSizePresetManagement();
 });
 
-// タブナビゲーション初期化
-function initTabNavigation(): void {
-  tabButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const tabName = btn.getAttribute('data-tab');
-      if (tabName) {
-        switchTab(tabName);
-      }
-    });
-  });
+function escapeHtml(str: string): string {
+  return str.replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c] || c));
 }
 
-// タブを切り替え
-function switchTab(tabName: string): void {
-  tabButtons.forEach((btn) => btn.classList.remove('active'));
-  tabContents.forEach((content) => content.classList.remove('active'));
-
-  const activeBtn = document.querySelector(`[data-tab="${tabName}"]`) as HTMLButtonElement;
-  if (activeBtn) activeBtn.classList.add('active');
-
-  const activeContent = document.getElementById(tabName) as HTMLElement;
-  if (activeContent) activeContent.classList.add('active');
+function makePresetId(label: string): string {
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset';
+  return `user-${Date.now()}-${slug}`;
 }
 
-// 設定を読み込み
+function getActiveRuleId(): string {
+  return activeRuleSelect?.value || currentSettings.activeRuleId || 'generic';
+}
+
+function getActiveRule(): SiteRule | undefined {
+  const ruleId = getActiveRuleId();
+  return currentSettings.siteRules?.find((rule) => rule.siteId === ruleId);
+}
+
 async function loadSettings(): Promise<void> {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
-      if (response && !response.error) {
-        const savedPresets = response.sizePresets || [];
-        const savedPresetNames = new Set(savedPresets.map((p: SizePreset) => p.name));
-        const newPresets = DEFAULT_SIZE_PRESETS.filter((p: SizePreset) => !savedPresetNames.has(p.name));
-        const mergedPresets = [...savedPresets, ...newPresets];
-
-        currentSettings = {
-          ...DEFAULT_SETTINGS,
-          ...response,
-          sizePresets: mergedPresets,
-          customNameTemplates: response.customNameTemplates || [],
-          ruleSpecificTemplates: response.ruleSpecificTemplates || {
-            'generic': [],
-            'patreon': [],
-            'pixiv_fanbox': [],
-          },
-          ruleSpecificPresets: response.ruleSpecificPresets || {
-            'generic': [],
-            'patreon': [],
-            'pixiv_fanbox': [],
-          },
-        };
-
-        filenameTemplateInput.value = currentSettings.filenameTemplate;
-        downloadFolderInput.value = currentSettings.downloadFolder;
-
-        // オーバーレイトグルの状態を設定
-        if (overlayEnabledCheckbox) {
-          overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
-        }
-
-        renderGlobalTemplateList();
-        renderGlobalPresetList();
-        renderAllRuleLists();
-      }
+      currentSettings = normalizeSettings(response && !response.error ? response : DEFAULT_SETTINGS);
+      renderAll();
       resolve();
     });
   });
 }
 
-function escapeHtml(str: string): string {
-  return str.replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c] || c));
+function renderAll(): void {
+  renderRuleSelect();
+  renderRuleDetails();
+  renderGlobalSettings();
+  renderSizePresetList();
 }
 
-// ========================================
-// グローバルテンプレート管理
-// ========================================
-function initGlobalTemplateManagement(): void {
-  if (addCustomTemplateBtn) {
-    addCustomTemplateBtn.addEventListener('click', addGlobalTemplate);
-  }
-  if (newTemplateInput) {
-    newTemplateInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') addGlobalTemplate();
-    });
-  }
-}
-
-function renderGlobalTemplateList(): void {
-  if (!customTemplateList) return;
-  customTemplateList.innerHTML = '';
-
-  const templates = currentSettings.customNameTemplates || [];
-  if (templates.length === 0) {
-    customTemplateList.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-    return;
-  }
-
-  for (let i = 0; i < templates.length; i++) {
-    const name = templates[i];
-    const item = document.createElement('div');
-    item.className = 'template-item';
-    item.innerHTML = `<span class="name">${escapeHtml(name)}</span><button class="delete-btn" data-index="${i}">×</button>`;
-    customTemplateList.appendChild(item);
-  }
-
-  customTemplateList.querySelectorAll('.delete-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt((e.target as HTMLElement).getAttribute('data-index') || '0');
-      deleteGlobalTemplate(index);
+function initTabNavigation(): void {
+  tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.getAttribute('data-tab');
+      if (!tabName) return;
+      tabButtons.forEach((button) => button.classList.remove('active'));
+      tabContents.forEach((content) => content.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(tabName)?.classList.add('active');
     });
   });
 }
 
-function addGlobalTemplate(): void {
-  if (!newTemplateInput) return;
-  const name = newTemplateInput.value.trim();
-  if (!name || currentSettings.customNameTemplates.includes(name)) return;
+function initRuleEditor(): void {
+  activeRuleSelect?.addEventListener('change', async () => {
+    currentSettings.activeRuleId = getActiveRuleId();
+    ensureRuleSession(getActiveRuleId());
+    renderRuleDetails();
+    await saveSettings();
+  });
 
-  currentSettings.customNameTemplates.push(name);
-  newTemplateInput.value = '';
-  renderGlobalTemplateList();
-  saveSettings();
+  addFilenamePresetBtn?.addEventListener('click', addFilenamePreset);
+  newFilenamePresetTemplate?.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') addFilenamePreset();
+  });
 }
 
-function deleteGlobalTemplate(index: number): void {
-  currentSettings.customNameTemplates.splice(index, 1);
-  renderGlobalTemplateList();
-  saveSettings();
+function renderRuleSelect(): void {
+  if (!activeRuleSelect) return;
+  activeRuleSelect.innerHTML = '';
+  for (const rule of currentSettings.siteRules || []) {
+    const option = document.createElement('option');
+    option.value = rule.siteId;
+    option.textContent = rule.label.replace(/ ルール$/, '');
+    activeRuleSelect.appendChild(option);
+  }
+  activeRuleSelect.value = currentSettings.activeRuleId || 'generic';
 }
 
-// ========================================
-// グローバルプリセット管理
-// ========================================
-function initGlobalPresetManagement(): void {
-  if (addSizePresetBtn) {
-    addSizePresetBtn.addEventListener('click', addGlobalPreset);
-  }
-  if (newPresetNameInput) {
-    newPresetNameInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') addGlobalPreset();
-    });
-  }
+function renderRuleDetails(): void {
+  renderRuleVariables();
+  renderFilenamePresetList();
 }
 
-function renderGlobalPresetList(): void {
-  if (!sizePresetList) return;
-  sizePresetList.innerHTML = '';
+function renderRuleVariables(): void {
+  const rule = getActiveRule();
+  if (!ruleVariables || !rule) return;
 
-  const presets = currentSettings.sizePresets || [];
-  if (presets.length === 0) {
-    sizePresetList.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-    return;
+  if (ruleDescription) {
+    ruleDescription.textContent = rule.description;
   }
 
-  for (let i = 0; i < presets.length; i++) {
-    const preset = presets[i];
-    const item = document.createElement('div');
-    item.className = 'preset-item';
-    item.innerHTML = `
-      <span class="preset-name">${escapeHtml(preset.name)}</span>
-      <span class="preset-size">${preset.minWidth}×${preset.minHeight}px</span>
-      <button class="delete-btn" data-index="${i}">×</button>
-    `;
-    sizePresetList.appendChild(item);
-  }
+  const variables = [...rule.availableVariables.map((variable) => variable.name), 'custom'];
+  ruleVariables.innerHTML = variables
+    .map((name) => `<button type="button" class="variable-chip" data-variable="${escapeHtml(name)}">{${escapeHtml(name)}}</button>`)
+    .join('');
 
-  sizePresetList.querySelectorAll('.delete-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt((e.target as HTMLElement).getAttribute('data-index') || '0');
-      deleteGlobalPreset(index);
+  ruleVariables.querySelectorAll('.variable-chip').forEach((button) => {
+    button.addEventListener('click', () => {
+      const variable = (button as HTMLElement).dataset.variable || '';
+      insertAtCursor(newFilenamePresetTemplate, `{${variable}}`);
     });
   });
 }
 
-function addGlobalPreset(): void {
-  if (!newPresetNameInput || !newPresetWidthInput || !newPresetHeightInput) return;
-
-  const name = newPresetNameInput.value.trim();
-  const minWidth = parseInt(newPresetWidthInput.value) || 0;
-  const minHeight = parseInt(newPresetHeightInput.value) || 0;
-
-  if (!name || currentSettings.sizePresets.some(p => p.name === name)) return;
-
-  currentSettings.sizePresets.push({ name, minWidth, minHeight });
-  newPresetNameInput.value = '';
-  newPresetWidthInput.value = '';
-  newPresetHeightInput.value = '';
-  renderGlobalPresetList();
-  saveSettings();
-}
-
-function deleteGlobalPreset(index: number): void {
-  currentSettings.sizePresets.splice(index, 1);
-  renderGlobalPresetList();
-  saveSettings();
-}
-
-// ========================================
-// ルール別テンプレート/プリセット管理
-// ========================================
-function renderRuleTemplateList(htmlPrefix: string): void {
-  const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-  const listDiv = document.getElementById(`${htmlPrefix}-templates-list`) as HTMLDivElement | null;
-  if (!listDiv || !ruleId) return;
-
-  const templates = currentSettings.ruleSpecificTemplates?.[ruleId] || [];
-  listDiv.innerHTML = '';
-
-  if (templates.length === 0) {
-    listDiv.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-    return;
-  }
-
-  for (let i = 0; i < templates.length; i++) {
-    const name = templates[i];
-    const item = document.createElement('div');
-    item.className = 'template-item';
-    item.innerHTML = `<span class="name">${escapeHtml(name)}</span><button class="delete-btn" data-index="${i}" data-rule="${htmlPrefix}">×</button>`;
-    listDiv.appendChild(item);
-  }
-
-  listDiv.querySelectorAll('.delete-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt((e.target as HTMLElement).getAttribute('data-index') || '0');
-      const rule = (e.target as HTMLElement).getAttribute('data-rule') || '';
-      deleteRuleTemplate(rule, index);
-    });
-  });
-}
-
-function addRuleTemplate(htmlPrefix: string): void {
-  const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-  const input = document.getElementById(`${htmlPrefix}-new-template`) as HTMLInputElement | null;
-  if (!input || !ruleId) return;
-
-  const name = input.value.trim();
-  if (!name) return;
-
-  if (!currentSettings.ruleSpecificTemplates) {
-    currentSettings.ruleSpecificTemplates = {};
-  }
-  if (!currentSettings.ruleSpecificTemplates[ruleId]) {
-    currentSettings.ruleSpecificTemplates[ruleId] = [];
-  }
-
-  if (currentSettings.ruleSpecificTemplates[ruleId].includes(name)) return;
-
-  currentSettings.ruleSpecificTemplates[ruleId].push(name);
-  input.value = '';
-  renderRuleTemplateList(htmlPrefix);
-  saveSettings();
-}
-
-function deleteRuleTemplate(htmlPrefix: string, index: number): void {
-  const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-  if (!ruleId || !currentSettings.ruleSpecificTemplates?.[ruleId]) return;
-
-  currentSettings.ruleSpecificTemplates[ruleId].splice(index, 1);
-  renderRuleTemplateList(htmlPrefix);
-  saveSettings();
-}
-
-function renderRulePresetList(htmlPrefix: string): void {
-  const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-  const listDiv = document.getElementById(`${htmlPrefix}-presets-list`) as HTMLDivElement | null;
-  if (!listDiv || !ruleId) return;
-
-  const presets = currentSettings.ruleSpecificPresets?.[ruleId] || [];
-  listDiv.innerHTML = '';
+function renderFilenamePresetList(): void {
+  if (!filenamePresetList) return;
+  const ruleId = getActiveRuleId();
+  const presets = getRuleFilenamePresets(currentSettings, ruleId);
+  const selectedId = currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id;
 
   if (presets.length === 0) {
-    listDiv.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
+    filenamePresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
     return;
   }
 
-  for (let i = 0; i < presets.length; i++) {
-    const preset = presets[i];
-    const item = document.createElement('div');
-    item.className = 'preset-item';
-    item.innerHTML = `
-      <span class="preset-name">${escapeHtml(preset.name)}</span>
-      <span class="preset-size">${preset.minWidth}×${preset.minHeight}px</span>
-      <button class="delete-btn" data-index="${i}" data-rule="${htmlPrefix}">×</button>
-    `;
-    listDiv.appendChild(item);
-  }
+  filenamePresetList.innerHTML = presets.map((preset, index) => `
+    <div class="item-entry filename-preset-entry">
+      <label class="radio-row">
+        <input type="radio" name="filename-preset" value="${escapeHtml(preset.id)}" ${preset.id === selectedId ? 'checked' : ''}>
+        <span class="name">${escapeHtml(preset.label)}</span>
+      </label>
+      <code>${escapeHtml(preset.template)}</code>
+      <button class="delete-btn" data-index="${index}" ${preset.id === 'default' || preset.id === 'manual' ? 'disabled' : ''}>×</button>
+    </div>
+  `).join('');
 
-  listDiv.querySelectorAll('.delete-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt((e.target as HTMLElement).getAttribute('data-index') || '0');
-      const rule = (e.target as HTMLElement).getAttribute('data-rule') || '';
-      deleteRulePreset(rule, index);
-    });
-  });
-}
-
-function addRulePreset(htmlPrefix: string): void {
-  const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-  const nameInput = document.getElementById(`${htmlPrefix}-new-preset-name`) as HTMLInputElement | null;
-  const widthInput = document.getElementById(`${htmlPrefix}-new-preset-width`) as HTMLInputElement | null;
-  const heightInput = document.getElementById(`${htmlPrefix}-new-preset-height`) as HTMLInputElement | null;
-  if (!nameInput || !widthInput || !heightInput || !ruleId) return;
-
-  const name = nameInput.value.trim();
-  const minWidth = parseInt(widthInput.value) || 0;
-  const minHeight = parseInt(heightInput.value) || 0;
-  if (!name) return;
-
-  if (!currentSettings.ruleSpecificPresets) {
-    currentSettings.ruleSpecificPresets = {};
-  }
-  if (!currentSettings.ruleSpecificPresets[ruleId]) {
-    currentSettings.ruleSpecificPresets[ruleId] = [];
-  }
-
-  if (currentSettings.ruleSpecificPresets[ruleId].some(p => p.name === name)) return;
-
-  currentSettings.ruleSpecificPresets[ruleId].push({ name, minWidth, minHeight });
-  nameInput.value = '';
-  widthInput.value = '';
-  heightInput.value = '';
-  renderRulePresetList(htmlPrefix);
-  saveSettings();
-}
-
-function deleteRulePreset(htmlPrefix: string, index: number): void {
-  const ruleId = HTML_TO_RULE_ID[htmlPrefix];
-  if (!ruleId || !currentSettings.ruleSpecificPresets?.[ruleId]) return;
-
-  currentSettings.ruleSpecificPresets[ruleId].splice(index, 1);
-  renderRulePresetList(htmlPrefix);
-  saveSettings();
-}
-
-function renderAllRuleLists(): void {
-  for (const htmlPrefix of Object.keys(HTML_TO_RULE_ID)) {
-    renderRuleTemplateList(htmlPrefix);
-    renderRulePresetList(htmlPrefix);
-  }
-}
-
-function initRuleManagement(): void {
-  // Patreon
-  document.getElementById('patreon-add-template')?.addEventListener('click', () => addRuleTemplate('patreon'));
-  document.getElementById('patreon-add-preset')?.addEventListener('click', () => addRulePreset('patreon'));
-
-  // Pixiv Fanbox
-  document.getElementById('fanbox-add-template')?.addEventListener('click', () => addRuleTemplate('fanbox'));
-  document.getElementById('fanbox-add-preset')?.addEventListener('click', () => addRulePreset('fanbox'));
-
-  // Generic
-  document.getElementById('generic-add-template')?.addEventListener('click', () => addRuleTemplate('generic'));
-  document.getElementById('generic-add-preset')?.addEventListener('click', () => addRulePreset('generic'));
-}
-
-// ========================================
-// オーバーレイトグル管理
-// ========================================
-function initOverlayToggle(): void {
-  if (overlayEnabledCheckbox) {
-    overlayEnabledCheckbox.addEventListener('change', async () => {
-      currentSettings.overlayEnabled = overlayEnabledCheckbox.checked;
+  filenamePresetList.querySelectorAll('input[name="filename-preset"]').forEach((radio) => {
+    radio.addEventListener('change', async () => {
+      ensureRuleSession(ruleId);
+      currentSettings.ruleSessionSettings![ruleId]!.selectedFilenamePresetId = (radio as HTMLInputElement).value;
+      currentSettings.namingMode = getRuleFilenamePresets(currentSettings, ruleId)
+        .find((preset) => preset.id === (radio as HTMLInputElement).value)?.template.includes('{custom}')
+        ? 'custom'
+        : 'template';
       await saveSettings();
+    });
+  });
 
-      // 全てのタブにオーバーレイの表示/非表示を通知
-      try {
-        chrome.tabs.query({}, (tabs) => {
-          for (const tab of tabs) {
-            if (tab.id) {
-              chrome.tabs.sendMessage(tab.id, {
-                type: 'TOGGLE_OVERLAY',
-                enabled: currentSettings.overlayEnabled,
-              }).catch(() => {
-                // タブが対応していない場合は無視
-              });
-            }
-          }
-        });
-      } catch (error) {
-        console.error('Failed to notify tabs:', error);
+  filenamePresetList.querySelectorAll('.delete-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = parseInt((button as HTMLElement).dataset.index || '-1', 10);
+      deleteFilenamePreset(index);
+    });
+  });
+}
+
+function addFilenamePreset(): void {
+  const ruleId = getActiveRuleId();
+  const label = newFilenamePresetLabel.value.trim();
+  const template = newFilenamePresetTemplate.value.trim();
+  if (!label || !template) return;
+
+  if (!currentSettings.ruleFilenamePresets) currentSettings.ruleFilenamePresets = {};
+  if (!currentSettings.ruleFilenamePresets[ruleId]) currentSettings.ruleFilenamePresets[ruleId] = [];
+
+  const preset: FilenamePreset = {
+    id: makePresetId(label),
+    label,
+    template,
+  };
+  currentSettings.ruleFilenamePresets[ruleId].push(preset);
+  ensureRuleSession(ruleId);
+  currentSettings.ruleSessionSettings![ruleId]!.selectedFilenamePresetId = preset.id;
+  currentSettings.namingMode = template.includes('{custom}') ? 'custom' : 'template';
+
+  newFilenamePresetLabel.value = '';
+  newFilenamePresetTemplate.value = '';
+  renderFilenamePresetList();
+  saveSettings();
+}
+
+function deleteFilenamePreset(index: number): void {
+  const ruleId = getActiveRuleId();
+  const presets = currentSettings.ruleFilenamePresets?.[ruleId];
+  if (!presets || index < 0) return;
+  const preset = presets[index];
+  if (!preset || preset.id === 'default' || preset.id === 'manual') return;
+
+  presets.splice(index, 1);
+  ensureRuleSession(ruleId);
+  currentSettings.ruleSessionSettings![ruleId]!.selectedFilenamePresetId = presets[0]?.id || 'default';
+  renderFilenamePresetList();
+  saveSettings();
+}
+
+function insertAtCursor(input: HTMLInputElement, text: string): void {
+  if (!input) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  input.focus();
+  input.setSelectionRange(start + text.length, start + text.length);
+}
+
+function ensureRuleSession(ruleId: string): void {
+  if (!currentSettings.ruleSessionSettings) currentSettings.ruleSessionSettings = {};
+  if (!currentSettings.ruleSessionSettings[ruleId]) {
+    currentSettings.ruleSessionSettings[ruleId] = {
+      customName: '',
+      selectedPreset: currentSettings.selectedPreset || '',
+      namingMode: 'template',
+      selectedFilenamePresetId: getRuleFilenamePresets(currentSettings, ruleId)[0]?.id || 'default',
+    };
+  }
+}
+
+function initGlobalSettings(): void {
+  saveGlobalSettingsBtn?.addEventListener('click', async () => {
+    currentSettings.downloadFolder = downloadFolderInput.value || DEFAULT_SETTINGS.downloadFolder;
+    currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
+    await saveSettings();
+    showStatus('設定を保存しました');
+  });
+
+  overlayEnabledCheckbox?.addEventListener('change', async () => {
+    currentSettings.overlayEnabled = overlayEnabledCheckbox.checked;
+    await saveSettings();
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (!tab.id) continue;
+        chrome.tabs.sendMessage(tab.id, {
+          type: 'TOGGLE_OVERLAY',
+          enabled: currentSettings.overlayEnabled,
+        }).catch(() => {});
       }
     });
-  }
-}
-
-// ========================================
-// 設定保存
-// ========================================
-async function saveSettings(): Promise<void> {
-  try {
-    await chrome.runtime.sendMessage({
-      type: 'SAVE_SETTINGS',
-      settings: currentSettings,
-    });
-  } catch (error) {
-    console.error('Failed to save settings:', error);
-  }
-}
-
-// グローバル設定保存ボタン
-if (saveGlobalSettingsBtn) {
-  saveGlobalSettingsBtn.addEventListener('click', async () => {
-    currentSettings.filenameTemplate = filenameTemplateInput.value || DEFAULT_SETTINGS.filenameTemplate;
-    currentSettings.downloadFolder = downloadFolderInput.value || DEFAULT_SETTINGS.downloadFolder;
-
-    try {
-      await chrome.runtime.sendMessage({
-        type: 'SAVE_SETTINGS',
-        settings: currentSettings,
-      });
-      status.textContent = '設定を保存しました';
-      setTimeout(() => {
-        status.textContent = '';
-      }, 2000);
-    } catch (error) {
-      status.textContent = '保存に失敗しました';
-    }
   });
+}
+
+function renderGlobalSettings(): void {
+  if (downloadFolderInput) downloadFolderInput.value = currentSettings.downloadFolder;
+  if (scanScrollEnabledCheckbox) scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
+  if (overlayEnabledCheckbox) overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
+}
+
+function initSizePresetManagement(): void {
+  addSizePresetBtn?.addEventListener('click', addSizePreset);
+  newPresetWidthInput?.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') addSizePreset();
+  });
+}
+
+function renderSizePresetList(): void {
+  if (!sizePresetList) return;
+  const presets = currentSettings.sizePresets || [];
+
+  if (presets.length === 0) {
+    sizePresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
+    return;
+  }
+
+  sizePresetList.innerHTML = presets.map((preset, index) => `
+    <div class="preset-item">
+      <span class="preset-name">${preset.minWidth}px</span>
+      <button class="delete-btn" data-index="${index}">×</button>
+    </div>
+  `).join('');
+
+  sizePresetList.querySelectorAll('.delete-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = parseInt((button as HTMLElement).dataset.index || '-1', 10);
+      if (index < 0) return;
+      currentSettings.sizePresets.splice(index, 1);
+      renderSizePresetList();
+      saveSettings();
+    });
+  });
+}
+
+function addSizePreset(): void {
+  const minWidth = parseInt(newPresetWidthInput.value, 10) || 0;
+  if (minWidth <= 0 || currentSettings.sizePresets.some((preset) => preset.minWidth === minWidth)) return;
+
+  const preset: SizePreset = { name: `${minWidth}px`, minWidth, minHeight: 0 };
+  currentSettings.sizePresets.push(preset);
+  newPresetWidthInput.value = '';
+  renderSizePresetList();
+  saveSettings();
+}
+
+async function saveSettings(): Promise<void> {
+  currentSettings = normalizeSettings(currentSettings);
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTINGS',
+    settings: currentSettings,
+  });
+}
+
+function showStatus(message: string): void {
+  if (!status) return;
+  status.textContent = message;
+  setTimeout(() => {
+    status.textContent = '';
+  }, 2000);
 }

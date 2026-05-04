@@ -6,6 +6,12 @@ export interface SizePreset {
   minHeight: number;
 }
 
+export interface FilenamePreset {
+  id: string;
+  label: string;
+  template: string;
+}
+
 /**
  * ルール別の実行時設定（スキャン時に変更する項目）
  * 各ルール（Patreon、Pixiv Fanbox、汎用など）ごとに個別に保存される
@@ -14,6 +20,7 @@ export interface RuleSessionSettings {
   customName: string;           // 今回のカスタム名
   selectedPreset: string;       // 今回選択したプリセット
   namingMode: 'custom' | 'template';  // 今回の命名モード
+  selectedFilenamePresetId?: string;  // 今回選択した保存名プリセット
 }
 
 export interface Settings {
@@ -23,6 +30,7 @@ export interface Settings {
   minHeight: number;
   enabledExtensions: string[];
   downloadFolder: string;
+  scanScrollEnabled: boolean;  // スキャン時にスクロールしてLazy Loadを発火
   skipDuplicates: boolean;
   overlayEnabled: boolean;  // オーバーレイの表示/非表示
   creatorList: string[];      // 登録済みクリエイター名リスト
@@ -56,20 +64,41 @@ export interface Settings {
   ruleSpecificPresets?: {
     [ruleId: string]: SizePreset[];    // ルール別サイズプリセット
   }
+
+  // ルール別の保存名プリセット（新しい命名モデル）
+  ruleFilenamePresets?: {
+    [ruleId: string]: FilenamePreset[];
+  }
 }
 
 export const DEFAULT_SIZE_PRESETS: SizePreset[] = [
-  { name: '小サイズ除外 (200px)', minWidth: 200, minHeight: 200 },
-  { name: '標準 (400px)', minWidth: 400, minHeight: 400 },
-  { name: '大きめ (800px)', minWidth: 800, minHeight: 800 },
-  { name: 'HD以上 (1280px)', minWidth: 1280, minHeight: 720 },
-  { name: 'Full HD (1920px)', minWidth: 1920, minHeight: 1080 },
-  { name: '2K (2560px)', minWidth: 2560, minHeight: 1440 },
-  { name: '4K (3840px)', minWidth: 3840, minHeight: 2160 },
-  { name: '4K Ultrawide (5120px)', minWidth: 5120, minHeight: 1440 },
-  { name: '5K (5120px)', minWidth: 5120, minHeight: 2880 },
-  { name: '8K (7680px)', minWidth: 7680, minHeight: 4320 },
+  { name: '500px', minWidth: 500, minHeight: 0 },
+  { name: '800px', minWidth: 800, minHeight: 0 },
+  { name: '1000px', minWidth: 1000, minHeight: 0 },
+  { name: '1200px', minWidth: 1200, minHeight: 0 },
+  { name: '1600px', minWidth: 1600, minHeight: 0 },
+  { name: '2500px', minWidth: 2500, minHeight: 0 },
+  { name: '3500px', minWidth: 3500, minHeight: 0 },
 ];
+
+export const DEFAULT_RULE_FILENAME_PRESETS: { [ruleId: string]: FilenamePreset[] } = {
+  generic: [
+    { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+  ],
+  patreon: [
+    { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+  ],
+  pixiv_fanbox: [
+    { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+  ],
+  x: [
+    { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+  ],
+};
 
 // デフォルトサイトルールをインポート（循環参照を避けるため遅延インポート）
 let defaultSiteRulesInitialized = false;
@@ -93,16 +122,17 @@ function getDefaultSiteRules(): SiteRule[] {
 export const DEFAULT_SETTINGS: Settings = {
   // グローバル設定
   filenameTemplate: '{date}_{title}_{index}',
-  minWidth: 400,
-  minHeight: 400,
+  minWidth: 800,
+  minHeight: 0,
   enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-  downloadFolder: 'PicPick',
+  downloadFolder: 'picpick',
+  scanScrollEnabled: false,
   skipDuplicates: true,
   overlayEnabled: true,  // デフォルトでオーバーレイを表示
   creatorList: [],
   lastSelectedCreator: '',
   sizePresets: DEFAULT_SIZE_PRESETS,
-  selectedPreset: '標準 (400px)',
+  selectedPreset: '800px',
   namingMode: 'custom',
   customNameTemplates: [],
 
@@ -110,23 +140,27 @@ export const DEFAULT_SETTINGS: Settings = {
   ruleSessionSettings: {
     'generic': {
       customName: '',
-      selectedPreset: '標準 (400px)',
+      selectedPreset: '800px',
       namingMode: 'custom',
+      selectedFilenamePresetId: 'manual',
     },
     'patreon': {
       customName: '',
-      selectedPreset: '標準 (400px)',
+      selectedPreset: '800px',
       namingMode: 'custom',
+      selectedFilenamePresetId: 'default',
     },
     'pixiv_fanbox': {
       customName: '',
-      selectedPreset: '標準 (400px)',
+      selectedPreset: '800px',
       namingMode: 'custom',
+      selectedFilenamePresetId: 'default',
     },
     'x': {
       customName: '',
-      selectedPreset: '標準 (400px)',
+      selectedPreset: '800px',
       namingMode: 'custom',
+      selectedFilenamePresetId: 'default',
     },
   },
 
@@ -148,4 +182,5 @@ export const DEFAULT_SETTINGS: Settings = {
     'pixiv_fanbox': [],
     'x': [],
   },
+  ruleFilenamePresets: DEFAULT_RULE_FILENAME_PRESETS,
 };

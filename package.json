@@ -1,6 +1,6 @@
 {
   "name": "picpick",
-  "version": "1.2.0",
+  "version": "2.5.0",
   "description": "Patreon/PIXIV/FANBOXから画像を一括ダウンロード",
   "scripts": {
     "build": "webpack --mode production",
