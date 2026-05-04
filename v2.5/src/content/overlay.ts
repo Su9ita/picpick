@@ -483,12 +483,8 @@ function createOverlay(): void {
         </select>
         <div class="picpick-size-inputs">
           <div class="picpick-size-input">
-            <label>最小幅 (px)</label>
-            <input type="number" id="picpick-min-width" min="0" value="400">
-          </div>
-          <div class="picpick-size-input">
-            <label>最小高さ (px)</label>
-            <input type="number" id="picpick-min-height" min="0" value="400">
+            <label>最小横幅 (px)</label>
+            <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
         </div>
         <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
@@ -549,7 +545,6 @@ function createOverlay(): void {
   const confirmBtn = document.getElementById('picpick-confirm-btn');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
 
   const rescanBtn = document.getElementById('picpick-rescan-btn');
 
@@ -561,17 +556,11 @@ function createOverlay(): void {
     const selectedPreset = currentSettings.sizePresets.find(p => p.name === presetSelect.value);
     if (selectedPreset) {
       minWidthInput.value = String(selectedPreset.minWidth);
-      minHeightInput.value = String(selectedPreset.minHeight);
     }
     updateFilteredCount();
   });
 
   minWidthInput?.addEventListener('input', () => {
-    presetSelect.value = '';
-    updateFilteredCount();
-  });
-
-  minHeightInput?.addEventListener('input', () => {
     presetSelect.value = '';
     updateFilteredCount();
   });
@@ -866,10 +855,9 @@ function showConfirmDialog(): void {
   const countEl = document.getElementById('picpick-dialog-count');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
   const ruleSelect = document.getElementById('picpick-rule-select') as HTMLSelectElement;
 
-  if (!dialog || !countEl || !presetSelect || !minWidthInput || !minHeightInput) return;
+  if (!dialog || !countEl || !presetSelect || !minWidthInput) return;
 
   // 【新規】サイトルール選択肢を初期化
   if (ruleSelect) {
@@ -902,7 +890,6 @@ function showConfirmDialog(): void {
     presetSelect.value = currentSettings.selectedPreset;
   }
   minWidthInput.value = String(currentSettings.minWidth);
-  minHeightInput.value = String(currentSettings.minHeight);
 
   updateFilteredCount();
   initOverlayNamingMode();
@@ -922,7 +909,7 @@ function updatePresetDropdown(): void {
   for (const preset of currentSettings.sizePresets || []) {
     const option = document.createElement('option');
     option.value = preset.name;
-    option.textContent = preset.name;
+    option.textContent = `${preset.minWidth}px`;
     presetSelect.appendChild(option);
   }
 
@@ -935,7 +922,7 @@ function updatePresetDropdown(): void {
     for (const preset of rulePresets) {
       const option = document.createElement('option');
       option.value = preset.name;
-      option.textContent = preset.name;
+      option.textContent = `${preset.minWidth}px`;
       optgroup.appendChild(option);
     }
     presetSelect.appendChild(optgroup);
@@ -997,17 +984,16 @@ function hideConfirmDialog(): void {
 // フィルター後の枚数を更新
 function updateFilteredCount(): void {
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
   const countEl = document.getElementById('picpick-dialog-count');
   const scannedEl = document.getElementById('picpick-dialog-scanned');
   const imageListEl = document.getElementById('picpick-image-list');
 
-  if (!minWidthInput || !minHeightInput || !countEl || !scannedEl || !imageListEl) return;
+  if (!minWidthInput || !countEl || !scannedEl || !imageListEl) return;
 
   const tempSettings: Settings = {
     ...currentSettings,
     minWidth: parseInt(minWidthInput.value) || 0,
-    minHeight: parseInt(minHeightInput.value) || 0,
+    minHeight: 0,
   };
 
   const filterResult = filterImages(scannedImages, tempSettings);
@@ -1131,9 +1117,8 @@ async function handleConfirmDownload(): Promise<void> {
   const progressBar = document.getElementById('picpick-progress-bar');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
-  const minHeightInput = document.getElementById('picpick-min-height') as HTMLInputElement;
 
-  if (!btn || !status || !statusText || !progressBar || !minWidthInput || !minHeightInput) return;
+  if (!btn || !status || !statusText || !progressBar || !minWidthInput) return;
 
   // 【新規】ダウンロード前にルール設定を保存
   if (currentSettings.activeRuleId && currentSettings.ruleSessionSettings) {
@@ -1169,7 +1154,7 @@ async function handleConfirmDownload(): Promise<void> {
   const settings: Settings = normalizeSettings({
     ...currentSettings,
     minWidth: parseInt(minWidthInput.value) || 0,
-    minHeight: parseInt(minHeightInput.value) || 0,
+    minHeight: 0,
     selectedPreset: presetSelect?.value || '',
   });
 

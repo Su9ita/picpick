@@ -471,16 +471,13 @@ var __webpack_exports__ = {};
 
 ;// ./src/types/settings.ts
 const DEFAULT_SIZE_PRESETS = [
-    { name: '小サイズ除外 (200px)', minWidth: 200, minHeight: 200 },
-    { name: '標準 (400px)', minWidth: 400, minHeight: 400 },
-    { name: '大きめ (800px)', minWidth: 800, minHeight: 800 },
-    { name: 'HD以上 (1280px)', minWidth: 1280, minHeight: 720 },
-    { name: 'Full HD (1920px)', minWidth: 1920, minHeight: 1080 },
-    { name: '2K (2560px)', minWidth: 2560, minHeight: 1440 },
-    { name: '4K (3840px)', minWidth: 3840, minHeight: 2160 },
-    { name: '4K Ultrawide (5120px)', minWidth: 5120, minHeight: 1440 },
-    { name: '5K (5120px)', minWidth: 5120, minHeight: 2880 },
-    { name: '8K (7680px)', minWidth: 7680, minHeight: 4320 },
+    { name: '500px', minWidth: 500, minHeight: 0 },
+    { name: '800px', minWidth: 800, minHeight: 0 },
+    { name: '1000px', minWidth: 1000, minHeight: 0 },
+    { name: '1200px', minWidth: 1200, minHeight: 0 },
+    { name: '1600px', minWidth: 1600, minHeight: 0 },
+    { name: '2500px', minWidth: 2500, minHeight: 0 },
+    { name: '3500px', minWidth: 3500, minHeight: 0 },
 ];
 const DEFAULT_RULE_FILENAME_PRESETS = {
     generic: [
@@ -521,8 +518,8 @@ function getDefaultSiteRules() {
 const DEFAULT_SETTINGS = {
     // グローバル設定
     filenameTemplate: '{date}_{title}_{index}',
-    minWidth: 400,
-    minHeight: 400,
+    minWidth: 800,
+    minHeight: 0,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
     downloadFolder: 'picpick',
     scanScrollEnabled: false,
@@ -531,32 +528,32 @@ const DEFAULT_SETTINGS = {
     creatorList: [],
     lastSelectedCreator: '',
     sizePresets: DEFAULT_SIZE_PRESETS,
-    selectedPreset: '標準 (400px)',
+    selectedPreset: '800px',
     namingMode: 'custom',
     customNameTemplates: [],
     // ルール別の実行時設定（デフォルト値）
     ruleSessionSettings: {
         'generic': {
             customName: '',
-            selectedPreset: '標準 (400px)',
+            selectedPreset: '800px',
             namingMode: 'custom',
             selectedFilenamePresetId: 'manual',
         },
         'patreon': {
             customName: '',
-            selectedPreset: '標準 (400px)',
+            selectedPreset: '800px',
             namingMode: 'custom',
             selectedFilenamePresetId: 'default',
         },
         'pixiv_fanbox': {
             customName: '',
-            selectedPreset: '標準 (400px)',
+            selectedPreset: '800px',
             namingMode: 'custom',
             selectedFilenamePresetId: 'default',
         },
         'x': {
             customName: '',
-            selectedPreset: '標準 (400px)',
+            selectedPreset: '800px',
             namingMode: 'custom',
             selectedFilenamePresetId: 'default',
         },
@@ -585,6 +582,20 @@ const DEFAULT_SETTINGS = {
 /* unused harmony import specifier */ var settings_normalizer_DEFAULT_SETTINGS;
 
 const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
+    '小サイズ除外 (200px)',
+    '標準 (400px)',
+    '大きめ (800px)',
+    '1000×500',
+    '1200×600',
+    'HD以上 (1280px)',
+    'Full HD (1920px)',
+    '2K (2560px)',
+    '4K (3840px)',
+    '4K Ultrawide (5120px)',
+    '5K (5120px)',
+    '8K (7680px)',
+]);
 function cloneFilenamePresets(source) {
     return Object.fromEntries(Object.entries(source).map(([ruleId, presets]) => [
         ruleId,
@@ -604,7 +615,15 @@ function addUniquePreset(presets, preset) {
     presets.push(preset);
 }
 function mergeSizePresets(saved) {
-    const existing = Array.isArray(saved) ? saved : [];
+    const existing = Array.isArray(saved)
+        ? saved
+            .filter((preset) => !REMOVED_DEFAULT_SIZE_PRESET_NAMES.has(preset.name))
+            .map((preset) => ({
+            ...preset,
+            name: `${preset.minWidth}px`,
+            minHeight: 0,
+        }))
+        : [];
     const existingNames = new Set(existing.map((preset) => preset.name));
     return [
         ...existing,
@@ -650,6 +669,7 @@ function normalizeSettings(input) {
     const settings = {
         ...DEFAULT_SETTINGS,
         ...saved,
+        minHeight: 0,
         sizePresets: mergeSizePresets(saved.sizePresets),
         customNameTemplates: saved.customNameTemplates || [],
         ruleSessionSettings: {
@@ -666,10 +686,21 @@ function normalizeSettings(input) {
         },
         ruleFilenamePresets,
     };
+    const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
+    if (settings.selectedPreset && !presetNames.has(settings.selectedPreset)) {
+        settings.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
+        settings.minWidth = DEFAULT_SETTINGS.minWidth;
+    }
+    else if (settings.selectedPreset) {
+        settings.minWidth = settings.sizePresets.find((preset) => preset.name === settings.selectedPreset)?.minWidth || settings.minWidth;
+    }
     for (const ruleId of RULE_IDS) {
         const session = settings.ruleSessionSettings?.[ruleId];
         if (session && !session.selectedFilenamePresetId) {
             session.selectedFilenamePresetId = session.namingMode === 'template' ? 'default' : 'manual';
+        }
+        if (session && session.selectedPreset && !presetNames.has(session.selectedPreset)) {
+            session.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
         }
     }
     return settings;
@@ -705,9 +736,7 @@ const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled')
 const saveGlobalSettingsBtn = document.getElementById('save-global-settings');
 const overlayEnabledCheckbox = document.getElementById('overlay-enabled');
 const sizePresetList = document.getElementById('size-preset-list');
-const newPresetNameInput = document.getElementById('new-preset-name');
 const newPresetWidthInput = document.getElementById('new-preset-width');
-const newPresetHeightInput = document.getElementById('new-preset-height');
 const addSizePresetBtn = document.getElementById('add-size-preset');
 const popup_status = document.getElementById('status');
 document.addEventListener('DOMContentLoaded', async () => {
@@ -941,7 +970,7 @@ function renderGlobalSettings() {
 }
 function initSizePresetManagement() {
     addSizePresetBtn?.addEventListener('click', addSizePreset);
-    newPresetNameInput?.addEventListener('keypress', (event) => {
+    newPresetWidthInput?.addEventListener('keypress', (event) => {
         if (event.key === 'Enter')
             addSizePreset();
     });
@@ -956,8 +985,7 @@ function renderSizePresetList() {
     }
     sizePresetList.innerHTML = presets.map((preset, index) => `
     <div class="preset-item">
-      <span class="preset-name">${escapeHtml(preset.name)}</span>
-      <span class="preset-size">${preset.minWidth}×${preset.minHeight}px</span>
+      <span class="preset-name">${preset.minWidth}px</span>
       <button class="delete-btn" data-index="${index}">×</button>
     </div>
   `).join('');
@@ -973,16 +1001,12 @@ function renderSizePresetList() {
     });
 }
 function addSizePreset() {
-    const name = newPresetNameInput.value.trim();
     const minWidth = parseInt(newPresetWidthInput.value, 10) || 0;
-    const minHeight = parseInt(newPresetHeightInput.value, 10) || 0;
-    if (!name || currentSettings.sizePresets.some((preset) => preset.name === name))
+    if (minWidth <= 0 || currentSettings.sizePresets.some((preset) => preset.minWidth === minWidth))
         return;
-    const preset = { name, minWidth, minHeight };
+    const preset = { name: `${minWidth}px`, minWidth, minHeight: 0 };
     currentSettings.sizePresets.push(preset);
-    newPresetNameInput.value = '';
     newPresetWidthInput.value = '';
-    newPresetHeightInput.value = '';
     renderSizePresetList();
     saveSettings();
 }

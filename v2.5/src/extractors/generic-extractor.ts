@@ -58,11 +58,13 @@ export class GenericExtractor extends BaseExtractor {
         if (maxWidth) width = maxWidth;
       }
 
+      const dimensions = await this.resolveImageDimensions(url, width, height);
+
       images.push({
         url,
         originalUrl: img.src,
-        width,
-        height,
+        width: dimensions.width,
+        height: dimensions.height,
         index: images.length + 1,
         metadata: {
           ...metadata,
@@ -106,11 +108,14 @@ export class GenericExtractor extends BaseExtractor {
       if (!bestUrl || seen.has(bestUrl)) continue;
       seen.add(bestUrl);
 
+      const resolvedBestUrl = this.resolveUrl(bestUrl);
+      const dimensions = await this.resolveImageDimensions(resolvedBestUrl, bestWidth || null, null);
+
       images.push({
-        url: bestUrl,
+        url: resolvedBestUrl,
         originalUrl: bestUrl,
-        width: bestWidth || null,
-        height: null,
+        width: dimensions.width,
+        height: dimensions.height,
         index: images.length + 1,
         metadata: {
           ...metadata,
@@ -140,12 +145,14 @@ export class GenericExtractor extends BaseExtractor {
             if (this.isDataUrl(url) || this.isSvgUrl(url)) continue;
 
             seen.add(url);
+            const resolvedUrl = this.resolveUrl(url);
+            const dimensions = await this.resolveImageDimensions(resolvedUrl, null, null);
 
             images.push({
-              url: this.resolveUrl(url),
+              url: resolvedUrl,
               originalUrl: url,
-              width: null,
-              height: null,
+              width: dimensions.width,
+              height: dimensions.height,
               index: images.length + 1,
               metadata: {
                 ...metadata,
@@ -173,12 +180,13 @@ export class GenericExtractor extends BaseExtractor {
       if (seen.has(url)) continue;
 
       seen.add(url);
+      const dimensions = await this.resolveImageDimensions(url, null, null);
 
       images.push({
         url,
         originalUrl: url,
-        width: null,
-        height: null,
+        width: dimensions.width,
+        height: dimensions.height,
         index: images.length + 1,
         metadata: {
           ...metadata,
@@ -226,6 +234,26 @@ export class GenericExtractor extends BaseExtractor {
         return { url, width };
       })
       .filter((s) => s.url);
+  }
+
+  private async resolveImageDimensions(
+    url: string,
+    width: number | null,
+    height: number | null
+  ): Promise<{ width: number | null; height: number | null }> {
+    if (width !== null && height !== null) {
+      return { width, height };
+    }
+
+    const dimensions = await this.getImageDimensions(url);
+    if (!dimensions) {
+      return { width, height };
+    }
+
+    return {
+      width: dimensions.width || width,
+      height: dimensions.height || height,
+    };
   }
 
   private getMaxWidthFromSrcset(srcset: string): number | null {

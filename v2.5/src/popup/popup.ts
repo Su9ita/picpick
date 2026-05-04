@@ -21,9 +21,7 @@ const saveGlobalSettingsBtn = document.getElementById('save-global-settings') as
 const overlayEnabledCheckbox = document.getElementById('overlay-enabled') as HTMLInputElement;
 
 const sizePresetList = document.getElementById('size-preset-list') as HTMLDivElement;
-const newPresetNameInput = document.getElementById('new-preset-name') as HTMLInputElement;
 const newPresetWidthInput = document.getElementById('new-preset-width') as HTMLInputElement;
-const newPresetHeightInput = document.getElementById('new-preset-height') as HTMLInputElement;
 const addSizePresetBtn = document.getElementById('add-size-preset') as HTMLButtonElement;
 const status = document.getElementById('status') as HTMLParagraphElement;
 
@@ -274,7 +272,7 @@ function renderGlobalSettings(): void {
 
 function initSizePresetManagement(): void {
   addSizePresetBtn?.addEventListener('click', addSizePreset);
-  newPresetNameInput?.addEventListener('keypress', (event) => {
+  newPresetWidthInput?.addEventListener('keypress', (event) => {
     if (event.key === 'Enter') addSizePreset();
   });
 }
@@ -290,8 +288,7 @@ function renderSizePresetList(): void {
 
   sizePresetList.innerHTML = presets.map((preset, index) => `
     <div class="preset-item">
-      <span class="preset-name">${escapeHtml(preset.name)}</span>
-      <span class="preset-size">${preset.minWidth}×${preset.minHeight}px</span>
+      <span class="preset-name">${preset.minWidth}px</span>
       <button class="delete-btn" data-index="${index}">×</button>
     </div>
   `).join('');
@@ -308,16 +305,12 @@ function renderSizePresetList(): void {
 }
 
 function addSizePreset(): void {
-  const name = newPresetNameInput.value.trim();
   const minWidth = parseInt(newPresetWidthInput.value, 10) || 0;
-  const minHeight = parseInt(newPresetHeightInput.value, 10) || 0;
-  if (!name || currentSettings.sizePresets.some((preset) => preset.name === name)) return;
+  if (minWidth <= 0 || currentSettings.sizePresets.some((preset) => preset.minWidth === minWidth)) return;
 
-  const preset: SizePreset = { name, minWidth, minHeight };
+  const preset: SizePreset = { name: `${minWidth}px`, minWidth, minHeight: 0 };
   currentSettings.sizePresets.push(preset);
-  newPresetNameInput.value = '';
   newPresetWidthInput.value = '';
-  newPresetHeightInput.value = '';
   renderSizePresetList();
   saveSettings();
 }

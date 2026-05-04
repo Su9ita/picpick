@@ -8,6 +8,20 @@ import {
 } from '../types/settings';
 
 const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
+  '小サイズ除外 (200px)',
+  '標準 (400px)',
+  '大きめ (800px)',
+  '1000×500',
+  '1200×600',
+  'HD以上 (1280px)',
+  'Full HD (1920px)',
+  '2K (2560px)',
+  '4K (3840px)',
+  '4K Ultrawide (5120px)',
+  '5K (5120px)',
+  '8K (7680px)',
+]);
 
 function cloneFilenamePresets(source: { [ruleId: string]: FilenamePreset[] }): { [ruleId: string]: FilenamePreset[] } {
   return Object.fromEntries(
@@ -34,7 +48,15 @@ function addUniquePreset(presets: FilenamePreset[], preset: FilenamePreset): voi
 }
 
 function mergeSizePresets(saved: SizePreset[] | undefined): SizePreset[] {
-  const existing = Array.isArray(saved) ? saved : [];
+  const existing = Array.isArray(saved)
+    ? saved
+      .filter((preset) => !REMOVED_DEFAULT_SIZE_PRESET_NAMES.has(preset.name))
+      .map((preset) => ({
+        ...preset,
+        name: `${preset.minWidth}px`,
+        minHeight: 0,
+      }))
+    : [];
   const existingNames = new Set(existing.map((preset) => preset.name));
   return [
     ...existing,
@@ -85,6 +107,7 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
   const settings: Settings = {
     ...DEFAULT_SETTINGS,
     ...saved,
+    minHeight: 0,
     sizePresets: mergeSizePresets(saved.sizePresets),
     customNameTemplates: saved.customNameTemplates || [],
     ruleSessionSettings: {
@@ -102,10 +125,21 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
     ruleFilenamePresets,
   };
 
+  const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
+  if (settings.selectedPreset && !presetNames.has(settings.selectedPreset)) {
+    settings.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
+    settings.minWidth = DEFAULT_SETTINGS.minWidth;
+  } else if (settings.selectedPreset) {
+    settings.minWidth = settings.sizePresets.find((preset) => preset.name === settings.selectedPreset)?.minWidth || settings.minWidth;
+  }
+
   for (const ruleId of RULE_IDS) {
     const session = settings.ruleSessionSettings?.[ruleId];
     if (session && !session.selectedFilenamePresetId) {
       session.selectedFilenamePresetId = session.namingMode === 'template' ? 'default' : 'manual';
+    }
+    if (session && session.selectedPreset && !presetNames.has(session.selectedPreset)) {
+      session.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
     }
   }
 
