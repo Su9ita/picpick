@@ -1,7 +1,7 @@
 import { DownloadImagesMessage, XTweetMedia } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { generateFilename, generateBasePrefix, findNextIndex } from '../utils/filename-template';
-import { getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
+import { getSelectedDownloadFolder, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 
 // メッセージリスナー
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -39,6 +39,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => sendResponse({ error: error.message }));
     return true;
   }
+
 });
 
 async function handleDownload(message: DownloadImagesMessage): Promise<{
@@ -46,13 +47,15 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
   failed: number;
   errors: string[];
 }> {
-  const { images, customName } = message;
+  const { images, customName, saveAs } = message;
   const settings = normalizeSettings(message.settings);
   let success = 0;
   let failed = 0;
   const errors: string[] = [];
   const startIndexes = new Map<string, number>();
   const attemptedCounts = new Map<string, number>();
+  const activeRuleId = settings.activeRuleId || 'generic';
+  const downloadFolder = getSelectedDownloadFolder(settings);
 
   for (let i = 0; i < images.length; i++) {
     const image = images[i];
@@ -60,21 +63,20 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
     let basePrefix: string;
     let filename: string;
 
-    const activeRuleId = settings.activeRuleId || 'generic';
     const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
 
     basePrefix = generateBasePrefix(selectedFilenamePreset.template, image, customName || '');
-    const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
+    const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);
     filename = generateFilename(selectedFilenamePreset.template, image, nextIndex, customName || '');
 
     attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
 
     try {
-      const downloadPath = settings.downloadFolder
-        ? `${settings.downloadFolder}/${filename}`
-        : filename;
+      const downloadPath = !saveAs && downloadFolder
+          ? `${downloadFolder}/${filename}`
+          : filename;
 
-      await downloadFileWithRetry(image.url, downloadPath);
+      await downloadFileWithRetry(image.url, downloadPath, saveAs === true);
       success++;
 
       // 進捗通知
@@ -109,13 +111,14 @@ async function getNextBatchIndex(
 async function downloadFileWithRetry(
   url: string,
   filename: string,
+  saveAs = false,
   retries = 2
 ): Promise<void> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      await downloadFile(url, filename);
+      await downloadFile(url, filename, saveAs);
       return;
     } catch (error) {
       lastError = error as Error;
@@ -128,23 +131,48 @@ async function downloadFileWithRetry(
   throw lastError || new Error('Download failed');
 }
 
-function downloadFile(url: string, filename: string): Promise<void> {
+function downloadFile(url: string, filename: string, saveAs: boolean): Promise<void> {
   return new Promise((resolve, reject) => {
+    let downloadIdForFilename: number | null = null;
+
+    const filenameListener = (
+      item: chrome.downloads.DownloadItem,
+      suggest: (suggestion?: chrome.downloads.DownloadFilenameSuggestion) => void
+    ) => {
+      if (
+        (downloadIdForFilename !== null && item.id !== downloadIdForFilename) ||
+        !isSameDownloadUrl(item.url, url)
+      ) {
+        return;
+      }
+
+      suggest({
+        filename,
+        conflictAction: 'uniquify',
+      });
+    };
+
+    chrome.downloads.onDeterminingFilename.addListener(filenameListener);
+
     chrome.downloads.download(
       {
         url,
         filename,
-        saveAs: false,
+        saveAs,
       },
       (downloadId) => {
         if (chrome.runtime.lastError) {
+          chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
           reject(new Error(chrome.runtime.lastError.message));
         } else if (downloadId === undefined) {
+          chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
           reject(new Error('Download failed'));
         } else {
+          downloadIdForFilename = downloadId;
           let settled = false;
 
           const cleanup = () => {
+            chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
             chrome.downloads.onChanged.removeListener(listener);
             clearTimeout(timeoutId);
           };
@@ -191,6 +219,22 @@ function downloadFile(url: string, filename: string): Promise<void> {
       }
     );
   });
+}
+
+function isSameDownloadUrl(downloadUrl: string | undefined, requestedUrl: string): boolean {
+  if (!downloadUrl) return false;
+  if (downloadUrl === requestedUrl) return true;
+
+  try {
+    const download = new URL(downloadUrl);
+    const requested = new URL(requestedUrl);
+    return download.origin === requested.origin
+      && download.pathname === requested.pathname
+      && download.searchParams.get('format') === requested.searchParams.get('format')
+      && download.searchParams.get('name') === requested.searchParams.get('name');
+  } catch {
+    return false;
+  }
 }
 
 function notifyProgress(current: number, total: number): void {

@@ -12,6 +12,12 @@ export interface FilenamePreset {
   template: string;
 }
 
+export interface DownloadFolderPreset {
+  id: string;
+  label: string;
+  folder: string;
+}
+
 /**
  * ルール別の実行時設定（スキャン時に変更する項目）
  * 各ルール（Patreon、Pixiv Fanbox、汎用など）ごとに個別に保存される
@@ -30,6 +36,8 @@ export interface Settings {
   minHeight: number;
   enabledExtensions: string[];
   downloadFolder: string;
+  downloadFolderPresets?: DownloadFolderPreset[];
+  selectedDownloadFolderPresetId?: string;
   scanScrollEnabled: boolean;  // スキャン時にスクロールしてLazy Loadを発火
   skipDuplicates: boolean;
   overlayEnabled: boolean;  // オーバーレイの表示/非表示
@@ -85,18 +93,22 @@ export const DEFAULT_RULE_FILENAME_PRESETS: { [ruleId: string]: FilenamePreset[]
   generic: [
     { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
     { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
   patreon: [
     { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
     { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
   pixiv_fanbox: [
     { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
     { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
   x: [
     { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
     { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
 };
 
@@ -125,7 +137,11 @@ export const DEFAULT_SETTINGS: Settings = {
   minWidth: 800,
   minHeight: 0,
   enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-  downloadFolder: 'picpick',
+  downloadFolder: '',
+  downloadFolderPresets: [
+    { id: 'picpick', label: 'picpick', folder: 'picpick' },
+  ],
+  selectedDownloadFolderPresetId: 'downloads',
   scanScrollEnabled: false,
   skipDuplicates: true,
   overlayEnabled: true,  // デフォルトでオーバーレイを表示

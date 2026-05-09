@@ -2,6 +2,7 @@ import {
   DEFAULT_RULE_FILENAME_PRESETS,
   DEFAULT_SETTINGS,
   DEFAULT_SIZE_PRESETS,
+  DownloadFolderPreset,
   FilenamePreset,
   Settings,
   SizePreset,
@@ -27,9 +28,22 @@ function cloneFilenamePresets(source: { [ruleId: string]: FilenamePreset[] }): {
   return Object.fromEntries(
     Object.entries(source).map(([ruleId, presets]) => [
       ruleId,
-      presets.map((preset) => ({ ...preset })),
+      presets.map((preset) => normalizeFilenamePreset(preset)),
     ])
   );
+}
+
+function ensureIndexInTemplate(template: string): string {
+  const trimmed = template.trim();
+  if (!trimmed || trimmed.includes('{index}')) return trimmed;
+  return `${trimmed.replace(/_+$/, '')}_{index}`;
+}
+
+function normalizeFilenamePreset(preset: FilenamePreset): FilenamePreset {
+  return {
+    ...preset,
+    template: ensureIndexInTemplate(preset.template),
+  };
 }
 
 function makePresetId(prefix: string, value: string, index: number): string {
@@ -41,10 +55,11 @@ function legacyNameToTemplate(value: string): string {
 }
 
 function addUniquePreset(presets: FilenamePreset[], preset: FilenamePreset): void {
-  if (presets.some((existing) => existing.id === preset.id || existing.template === preset.template)) {
+  const normalizedPreset = normalizeFilenamePreset(preset);
+  if (presets.some((existing) => existing.id === normalizedPreset.id || existing.template === normalizedPreset.template)) {
     return;
   }
-  presets.push(preset);
+  presets.push(normalizedPreset);
 }
 
 function mergeSizePresets(saved: SizePreset[] | undefined): SizePreset[] {
@@ -62,6 +77,38 @@ function mergeSizePresets(saved: SizePreset[] | undefined): SizePreset[] {
     ...existing,
     ...DEFAULT_SIZE_PRESETS.filter((preset) => !existingNames.has(preset.name)),
   ];
+}
+
+function sanitizeDownloadFolder(folder: string): string {
+  return folder
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => part.trim().replace(/[<>:"\\|?*\x00-\x1f]/g, '_'))
+    .filter(Boolean)
+    .join('/');
+}
+
+function makeFolderPresetId(folder: string, index: number): string {
+  return `folder-${index}-${folder.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'downloads'}`;
+}
+
+function mergeDownloadFolderPresets(saved: DownloadFolderPreset[] | undefined): DownloadFolderPreset[] {
+  const defaults = (DEFAULT_SETTINGS.downloadFolderPresets || []).map((preset) => ({ ...preset }));
+  const result = [...defaults];
+  const seenFolders = new Set(result.map((preset) => preset.folder));
+
+  for (const [index, preset] of (saved || []).entries()) {
+    const folder = sanitizeDownloadFolder(preset?.folder || '');
+    if (!folder || seenFolders.has(folder)) continue;
+    result.push({
+      id: preset.id || makeFolderPresetId(folder, index),
+      label: preset.label || folder,
+      folder,
+    });
+    seenFolders.add(folder);
+  }
+
+  return result;
 }
 
 export function normalizeSettings(input?: Partial<Settings> | null): Settings {
@@ -122,6 +169,8 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
       ...DEFAULT_SETTINGS.ruleSpecificPresets,
       ...(saved.ruleSpecificPresets || {}),
     },
+    downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+    selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
     ruleFilenamePresets,
   };
 
@@ -143,7 +192,21 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
     }
   }
 
+  const folderPresetIds = new Set([
+    'downloads',
+    ...(settings.downloadFolderPresets || []).map((preset) => preset.id),
+  ]);
+  if (settings.selectedDownloadFolderPresetId && !folderPresetIds.has(settings.selectedDownloadFolderPresetId)) {
+    settings.selectedDownloadFolderPresetId = DEFAULT_SETTINGS.selectedDownloadFolderPresetId;
+  }
+
   return settings;
+}
+
+export function getSelectedDownloadFolder(settings: Settings): string {
+  const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
+  if (selectedId === 'downloads') return '';
+  return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
 }
 
 export function getRuleFilenamePresets(settings: Settings, ruleId: string): FilenamePreset[] {

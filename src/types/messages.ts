@@ -20,6 +20,7 @@ export interface DownloadImagesMessage {
   images: ImageInfo[];
   settings: Settings;
   customName?: string;  // カスタム名モード時のファイル名
+  saveAs?: boolean;     // 今回だけ保存場所を選ぶ
 }
 
 export interface XTweetMedia {

@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, FilenamePreset, Settings, SizePreset } from '../types/settings';
+import { DEFAULT_SETTINGS, DownloadFolderPreset, FilenamePreset, Settings, SizePreset } from '../types/settings';
 import { SiteRule } from '../types/site-rules';
 import { getRuleFilenamePresets, normalizeSettings } from '../utils/settings-normalizer';
 
@@ -15,7 +15,9 @@ const newFilenamePresetLabel = document.getElementById('new-filename-preset-labe
 const newFilenamePresetTemplate = document.getElementById('new-filename-preset-template') as HTMLInputElement;
 const addFilenamePresetBtn = document.getElementById('add-filename-preset') as HTMLButtonElement;
 
-const downloadFolderInput = document.getElementById('download-folder') as HTMLInputElement;
+const downloadFolderPresetList = document.getElementById('download-folder-preset-list') as HTMLDivElement;
+const newDownloadFolderPresetInput = document.getElementById('new-download-folder-preset') as HTMLInputElement;
+const addDownloadFolderPresetBtn = document.getElementById('add-download-folder-preset') as HTMLButtonElement;
 const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled') as HTMLInputElement;
 const saveGlobalSettingsBtn = document.getElementById('save-global-settings') as HTMLButtonElement;
 const overlayEnabledCheckbox = document.getElementById('overlay-enabled') as HTMLInputElement;
@@ -48,6 +50,10 @@ function makePresetId(label: string): string {
   return `user-${Date.now()}-${slug}`;
 }
 
+function isBuiltInFilenamePreset(id: string): boolean {
+  return id === 'default' || id === 'manual' || id === 'custom-index';
+}
+
 function getActiveRuleId(): string {
   return activeRuleSelect?.value || currentSettings.activeRuleId || 'generic';
 }
@@ -72,6 +78,7 @@ function renderAll(): void {
   renderRuleDetails();
   renderGlobalSettings();
   renderSizePresetList();
+  renderDownloadFolderPresetList();
 }
 
 function initTabNavigation(): void {
@@ -157,7 +164,7 @@ function renderFilenamePresetList(): void {
         <span class="name">${escapeHtml(preset.label)}</span>
       </label>
       <code>${escapeHtml(preset.template)}</code>
-      <button class="delete-btn" data-index="${index}" ${preset.id === 'default' || preset.id === 'manual' ? 'disabled' : ''}>×</button>
+      <button class="delete-btn" data-index="${index}" ${isBuiltInFilenamePreset(preset.id) ? 'disabled' : ''}>×</button>
     </div>
   `).join('');
 
@@ -184,8 +191,13 @@ function renderFilenamePresetList(): void {
 function addFilenamePreset(): void {
   const ruleId = getActiveRuleId();
   const label = newFilenamePresetLabel.value.trim();
-  const template = newFilenamePresetTemplate.value.trim();
+  let template = newFilenamePresetTemplate.value.trim();
   if (!label || !template) return;
+
+  const appendedIndex = !template.includes('{index}');
+  if (appendedIndex) {
+    template = `${template.replace(/_+$/, '')}_{index}`;
+  }
 
   if (!currentSettings.ruleFilenamePresets) currentSettings.ruleFilenamePresets = {};
   if (!currentSettings.ruleFilenamePresets[ruleId]) currentSettings.ruleFilenamePresets[ruleId] = [];
@@ -204,6 +216,9 @@ function addFilenamePreset(): void {
   newFilenamePresetTemplate.value = '';
   renderFilenamePresetList();
   saveSettings();
+  if (appendedIndex) {
+    showStatus('連番用に _{index} を追加しました');
+  }
 }
 
 function deleteFilenamePreset(index: number): void {
@@ -211,7 +226,7 @@ function deleteFilenamePreset(index: number): void {
   const presets = currentSettings.ruleFilenamePresets?.[ruleId];
   if (!presets || index < 0) return;
   const preset = presets[index];
-  if (!preset || preset.id === 'default' || preset.id === 'manual') return;
+  if (!preset || isBuiltInFilenamePreset(preset.id)) return;
 
   presets.splice(index, 1);
   ensureRuleSession(ruleId);
@@ -242,8 +257,12 @@ function ensureRuleSession(ruleId: string): void {
 }
 
 function initGlobalSettings(): void {
+  addDownloadFolderPresetBtn?.addEventListener('click', addDownloadFolderPreset);
+  newDownloadFolderPresetInput?.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') addDownloadFolderPreset();
+  });
+
   saveGlobalSettingsBtn?.addEventListener('click', async () => {
-    currentSettings.downloadFolder = downloadFolderInput.value || DEFAULT_SETTINGS.downloadFolder;
     currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
     await saveSettings();
     showStatus('設定を保存しました');
@@ -265,9 +284,74 @@ function initGlobalSettings(): void {
 }
 
 function renderGlobalSettings(): void {
-  if (downloadFolderInput) downloadFolderInput.value = currentSettings.downloadFolder;
   if (scanScrollEnabledCheckbox) scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
   if (overlayEnabledCheckbox) overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
+}
+
+function sanitizeDownloadFolder(folder: string): string {
+  return folder
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => part.trim().replace(/[<>:"\\|?*\x00-\x1f]/g, '_'))
+    .filter(Boolean)
+    .join('/');
+}
+
+function makeDownloadFolderPresetId(folder: string): string {
+  return `folder-${Date.now()}-${folder.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'preset'}`;
+}
+
+function renderDownloadFolderPresetList(): void {
+  if (!downloadFolderPresetList) return;
+  const presets = currentSettings.downloadFolderPresets || [];
+
+  if (presets.length === 0) {
+    downloadFolderPresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
+    return;
+  }
+
+  downloadFolderPresetList.innerHTML = presets.map((preset, index) => `
+    <div class="item-entry">
+      <span class="name">${escapeHtml(preset.label)}</span>
+      <button class="delete-btn" data-index="${index}">×</button>
+    </div>
+  `).join('');
+
+  downloadFolderPresetList.querySelectorAll('.delete-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = parseInt((button as HTMLElement).dataset.index || '-1', 10);
+      deleteDownloadFolderPreset(index);
+    });
+  });
+}
+
+function addDownloadFolderPreset(): void {
+  const folder = sanitizeDownloadFolder(newDownloadFolderPresetInput.value);
+  if (!folder) return;
+
+  if (!currentSettings.downloadFolderPresets) currentSettings.downloadFolderPresets = [];
+  if (currentSettings.downloadFolderPresets.some((preset) => preset.folder === folder)) return;
+
+  const preset: DownloadFolderPreset = {
+    id: makeDownloadFolderPresetId(folder),
+    label: folder,
+    folder,
+  };
+  currentSettings.downloadFolderPresets.push(preset);
+  newDownloadFolderPresetInput.value = '';
+  renderDownloadFolderPresetList();
+  saveSettings();
+}
+
+function deleteDownloadFolderPreset(index: number): void {
+  const presets = currentSettings.downloadFolderPresets;
+  if (!presets || index < 0 || !presets[index]) return;
+  const removed = presets.splice(index, 1)[0];
+  if (currentSettings.selectedDownloadFolderPresetId === removed.id) {
+    currentSettings.selectedDownloadFolderPresetId = 'downloads';
+  }
+  renderDownloadFolderPresetList();
+  saveSettings();
 }
 
 function initSizePresetManagement(): void {

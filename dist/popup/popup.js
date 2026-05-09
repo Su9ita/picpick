@@ -483,18 +483,22 @@ const DEFAULT_RULE_FILENAME_PRESETS = {
     generic: [
         { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     patreon: [
         { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     pixiv_fanbox: [
         { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     x: [
         { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
 };
 // デフォルトサイトルールをインポート（循環参照を避けるため遅延インポート）
@@ -521,7 +525,11 @@ const DEFAULT_SETTINGS = {
     minWidth: 800,
     minHeight: 0,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-    downloadFolder: 'picpick',
+    downloadFolder: '',
+    downloadFolderPresets: [
+        { id: 'picpick', label: 'picpick', folder: 'picpick' },
+    ],
+    selectedDownloadFolderPresetId: 'downloads',
     scanScrollEnabled: false,
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
@@ -599,8 +607,20 @@ const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
 function cloneFilenamePresets(source) {
     return Object.fromEntries(Object.entries(source).map(([ruleId, presets]) => [
         ruleId,
-        presets.map((preset) => ({ ...preset })),
+        presets.map((preset) => normalizeFilenamePreset(preset)),
     ]));
+}
+function ensureIndexInTemplate(template) {
+    const trimmed = template.trim();
+    if (!trimmed || trimmed.includes('{index}'))
+        return trimmed;
+    return `${trimmed.replace(/_+$/, '')}_{index}`;
+}
+function normalizeFilenamePreset(preset) {
+    return {
+        ...preset,
+        template: ensureIndexInTemplate(preset.template),
+    };
 }
 function makePresetId(prefix, value, index) {
     return `${prefix}-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset'}`;
@@ -609,10 +629,11 @@ function legacyNameToTemplate(value) {
     return value.includes('{') ? value : `{date}_${value}_{index}`;
 }
 function addUniquePreset(presets, preset) {
-    if (presets.some((existing) => existing.id === preset.id || existing.template === preset.template)) {
+    const normalizedPreset = normalizeFilenamePreset(preset);
+    if (presets.some((existing) => existing.id === normalizedPreset.id || existing.template === normalizedPreset.template)) {
         return;
     }
-    presets.push(preset);
+    presets.push(normalizedPreset);
 }
 function mergeSizePresets(saved) {
     const existing = Array.isArray(saved)
@@ -629,6 +650,34 @@ function mergeSizePresets(saved) {
         ...existing,
         ...DEFAULT_SIZE_PRESETS.filter((preset) => !existingNames.has(preset.name)),
     ];
+}
+function sanitizeDownloadFolder(folder) {
+    return folder
+        .replace(/\\/g, '/')
+        .split('/')
+        .map((part) => part.trim().replace(/[<>:"\\|?*\x00-\x1f]/g, '_'))
+        .filter(Boolean)
+        .join('/');
+}
+function makeFolderPresetId(folder, index) {
+    return `folder-${index}-${folder.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'downloads'}`;
+}
+function mergeDownloadFolderPresets(saved) {
+    const defaults = (DEFAULT_SETTINGS.downloadFolderPresets || []).map((preset) => ({ ...preset }));
+    const result = [...defaults];
+    const seenFolders = new Set(result.map((preset) => preset.folder));
+    for (const [index, preset] of (saved || []).entries()) {
+        const folder = sanitizeDownloadFolder(preset?.folder || '');
+        if (!folder || seenFolders.has(folder))
+            continue;
+        result.push({
+            id: preset.id || makeFolderPresetId(folder, index),
+            label: preset.label || folder,
+            folder,
+        });
+        seenFolders.add(folder);
+    }
+    return result;
 }
 function normalizeSettings(input) {
     const saved = input || {};
@@ -684,6 +733,8 @@ function normalizeSettings(input) {
             ...DEFAULT_SETTINGS.ruleSpecificPresets,
             ...(saved.ruleSpecificPresets || {}),
         },
+        downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+        selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
         ruleFilenamePresets,
     };
     const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
@@ -703,7 +754,20 @@ function normalizeSettings(input) {
             session.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
         }
     }
+    const folderPresetIds = new Set([
+        'downloads',
+        ...(settings.downloadFolderPresets || []).map((preset) => preset.id),
+    ]);
+    if (settings.selectedDownloadFolderPresetId && !folderPresetIds.has(settings.selectedDownloadFolderPresetId)) {
+        settings.selectedDownloadFolderPresetId = DEFAULT_SETTINGS.selectedDownloadFolderPresetId;
+    }
     return settings;
+}
+function getSelectedDownloadFolder(settings) {
+    const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
+    if (selectedId === 'downloads')
+        return '';
+    return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
 }
 function getRuleFilenamePresets(settings, ruleId) {
     return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];
@@ -731,7 +795,9 @@ const filenamePresetList = document.getElementById('filename-preset-list');
 const newFilenamePresetLabel = document.getElementById('new-filename-preset-label');
 const newFilenamePresetTemplate = document.getElementById('new-filename-preset-template');
 const addFilenamePresetBtn = document.getElementById('add-filename-preset');
-const downloadFolderInput = document.getElementById('download-folder');
+const downloadFolderPresetList = document.getElementById('download-folder-preset-list');
+const newDownloadFolderPresetInput = document.getElementById('new-download-folder-preset');
+const addDownloadFolderPresetBtn = document.getElementById('add-download-folder-preset');
 const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled');
 const saveGlobalSettingsBtn = document.getElementById('save-global-settings');
 const overlayEnabledCheckbox = document.getElementById('overlay-enabled');
@@ -759,6 +825,9 @@ function popup_makePresetId(label) {
     const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset';
     return `user-${Date.now()}-${slug}`;
 }
+function isBuiltInFilenamePreset(id) {
+    return id === 'default' || id === 'manual' || id === 'custom-index';
+}
 function getActiveRuleId() {
     return activeRuleSelect?.value || currentSettings.activeRuleId || 'generic';
 }
@@ -780,6 +849,7 @@ function renderAll() {
     renderRuleDetails();
     renderGlobalSettings();
     renderSizePresetList();
+    renderDownloadFolderPresetList();
 }
 function initTabNavigation() {
     tabButtons.forEach((btn) => {
@@ -858,7 +928,7 @@ function renderFilenamePresetList() {
         <span class="name">${escapeHtml(preset.label)}</span>
       </label>
       <code>${escapeHtml(preset.template)}</code>
-      <button class="delete-btn" data-index="${index}" ${preset.id === 'default' || preset.id === 'manual' ? 'disabled' : ''}>×</button>
+      <button class="delete-btn" data-index="${index}" ${isBuiltInFilenamePreset(preset.id) ? 'disabled' : ''}>×</button>
     </div>
   `).join('');
     filenamePresetList.querySelectorAll('input[name="filename-preset"]').forEach((radio) => {
@@ -882,9 +952,13 @@ function renderFilenamePresetList() {
 function addFilenamePreset() {
     const ruleId = getActiveRuleId();
     const label = newFilenamePresetLabel.value.trim();
-    const template = newFilenamePresetTemplate.value.trim();
+    let template = newFilenamePresetTemplate.value.trim();
     if (!label || !template)
         return;
+    const appendedIndex = !template.includes('{index}');
+    if (appendedIndex) {
+        template = `${template.replace(/_+$/, '')}_{index}`;
+    }
     if (!currentSettings.ruleFilenamePresets)
         currentSettings.ruleFilenamePresets = {};
     if (!currentSettings.ruleFilenamePresets[ruleId])
@@ -902,6 +976,9 @@ function addFilenamePreset() {
     newFilenamePresetTemplate.value = '';
     renderFilenamePresetList();
     saveSettings();
+    if (appendedIndex) {
+        showStatus('連番用に _{index} を追加しました');
+    }
 }
 function deleteFilenamePreset(index) {
     const ruleId = getActiveRuleId();
@@ -909,7 +986,7 @@ function deleteFilenamePreset(index) {
     if (!presets || index < 0)
         return;
     const preset = presets[index];
-    if (!preset || preset.id === 'default' || preset.id === 'manual')
+    if (!preset || isBuiltInFilenamePreset(preset.id))
         return;
     presets.splice(index, 1);
     ensureRuleSession(ruleId);
@@ -939,8 +1016,12 @@ function ensureRuleSession(ruleId) {
     }
 }
 function initGlobalSettings() {
+    addDownloadFolderPresetBtn?.addEventListener('click', addDownloadFolderPreset);
+    newDownloadFolderPresetInput?.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter')
+            addDownloadFolderPreset();
+    });
     saveGlobalSettingsBtn?.addEventListener('click', async () => {
-        currentSettings.downloadFolder = downloadFolderInput.value || DEFAULT_SETTINGS.downloadFolder;
         currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
         await saveSettings();
         showStatus('設定を保存しました');
@@ -961,12 +1042,71 @@ function initGlobalSettings() {
     });
 }
 function renderGlobalSettings() {
-    if (downloadFolderInput)
-        downloadFolderInput.value = currentSettings.downloadFolder;
     if (scanScrollEnabledCheckbox)
         scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
     if (overlayEnabledCheckbox)
         overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
+}
+function popup_sanitizeDownloadFolder(folder) {
+    return folder
+        .replace(/\\/g, '/')
+        .split('/')
+        .map((part) => part.trim().replace(/[<>:"\\|?*\x00-\x1f]/g, '_'))
+        .filter(Boolean)
+        .join('/');
+}
+function makeDownloadFolderPresetId(folder) {
+    return `folder-${Date.now()}-${folder.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'preset'}`;
+}
+function renderDownloadFolderPresetList() {
+    if (!downloadFolderPresetList)
+        return;
+    const presets = currentSettings.downloadFolderPresets || [];
+    if (presets.length === 0) {
+        downloadFolderPresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
+        return;
+    }
+    downloadFolderPresetList.innerHTML = presets.map((preset, index) => `
+    <div class="item-entry">
+      <span class="name">${escapeHtml(preset.label)}</span>
+      <button class="delete-btn" data-index="${index}">×</button>
+    </div>
+  `).join('');
+    downloadFolderPresetList.querySelectorAll('.delete-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            const index = parseInt(button.dataset.index || '-1', 10);
+            deleteDownloadFolderPreset(index);
+        });
+    });
+}
+function addDownloadFolderPreset() {
+    const folder = popup_sanitizeDownloadFolder(newDownloadFolderPresetInput.value);
+    if (!folder)
+        return;
+    if (!currentSettings.downloadFolderPresets)
+        currentSettings.downloadFolderPresets = [];
+    if (currentSettings.downloadFolderPresets.some((preset) => preset.folder === folder))
+        return;
+    const preset = {
+        id: makeDownloadFolderPresetId(folder),
+        label: folder,
+        folder,
+    };
+    currentSettings.downloadFolderPresets.push(preset);
+    newDownloadFolderPresetInput.value = '';
+    renderDownloadFolderPresetList();
+    saveSettings();
+}
+function deleteDownloadFolderPreset(index) {
+    const presets = currentSettings.downloadFolderPresets;
+    if (!presets || index < 0 || !presets[index])
+        return;
+    const removed = presets.splice(index, 1)[0];
+    if (currentSettings.selectedDownloadFolderPresetId === removed.id) {
+        currentSettings.selectedDownloadFolderPresetId = 'downloads';
+    }
+    renderDownloadFolderPresetList();
+    saveSettings();
 }
 function initSizePresetManagement() {
     addSizePresetBtn?.addEventListener('click', addSizePreset);

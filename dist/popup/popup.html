@@ -72,8 +72,17 @@
 
       <section id="global-settings" class="tab-content">
         <div class="setting-item">
-          <label for="download-folder">保存フォルダ名</label>
-          <input type="text" id="download-folder" value="picpick" placeholder="picpick">
+          <label>保存先プリセット</label>
+          <div id="download-folder-preset-list" class="item-list"></div>
+        </div>
+
+        <div class="setting-item">
+          <label for="new-download-folder-preset">保存先を追加</label>
+          <div class="preset-input-group">
+            <input type="text" id="new-download-folder-preset" placeholder="例: picpick" class="input-medium">
+            <button id="add-download-folder-preset" class="btn btn-small">追加</button>
+          </div>
+          <small>ダウンロードフォルダ配下のフォルダ名を指定します。</small>
         </div>
 
         <div class="setting-item toggle-setting-item">

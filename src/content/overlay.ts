@@ -5,6 +5,7 @@ import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
 import { getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
+import { generateFilename } from '../utils/filename-template';
 
 let overlayContainer: HTMLDivElement | null = null;
 let isDownloading = false;
@@ -13,6 +14,12 @@ let currentSettings: Settings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
 
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
+
+function getRuleIdForCurrentPage(url: string): string {
+  const site = detectSite(url);
+  if (site === 'pixiv' || site === 'fanbox') return 'pixiv_fanbox';
+  return site === 'unknown' ? 'generic' : site;
+}
 
 // 対応サイトかチェックしてオーバーレイを表示
 export async function initOverlay(): Promise<void> {
@@ -199,6 +206,16 @@ function createOverlay(): void {
         outline: none;
         border-color: #6366f1;
       }
+      .picpick-save-destination {
+        margin-bottom: 8px;
+      }
+      .picpick-save-destination label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: #374151;
+        margin-bottom: 4px;
+      }
       .picpick-image-list {
         font-size: 12px;
         color: #6b7280;
@@ -324,116 +341,6 @@ function createOverlay(): void {
         color: #6366f1;
         font-family: monospace;
       }
-      /* 設定パネル */
-      .picpick-settings-panel {
-        margin-top: 12px;
-        margin-bottom: 12px;
-        border-top: 1px solid #e5e7eb;
-        padding-top: 12px;
-      }
-      .picpick-settings-toggle {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 13px;
-        color: #6b7280;
-        cursor: pointer;
-        list-style: none;
-      }
-      .picpick-settings-toggle::-webkit-details-marker {
-        display: none;
-      }
-      .picpick-settings-toggle:hover {
-        color: #4b5563;
-      }
-      .picpick-settings-toggle svg {
-        width: 16px;
-        height: 16px;
-      }
-      .picpick-settings-content {
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px solid #f3f4f6;
-      }
-      .picpick-setting-item {
-        margin-bottom: 12px;
-      }
-      .picpick-setting-item label {
-        display: block;
-        font-size: 12px;
-        font-weight: 500;
-        color: #374151;
-        margin-bottom: 4px;
-      }
-      .picpick-setting-item input {
-        width: 100%;
-        padding: 8px;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        font-size: 13px;
-        box-sizing: border-box;
-      }
-      .picpick-setting-item input:focus {
-        outline: none;
-        border-color: #6366f1;
-      }
-      .picpick-template-list {
-        max-height: 80px;
-        overflow-y: auto;
-        margin: 6px 0;
-      }
-      .picpick-template-item {
-        display: flex;
-        align-items: center;
-        padding: 4px 8px;
-        background: #f3f4f6;
-        border-radius: 4px;
-        margin-bottom: 4px;
-        font-size: 12px;
-      }
-      .picpick-template-item span {
-        flex: 1;
-        color: #6366f1;
-      }
-      .picpick-template-item button {
-        background: none;
-        border: none;
-        color: #9ca3af;
-        cursor: pointer;
-        font-size: 14px;
-      }
-      .picpick-template-item button:hover {
-        color: #dc2626;
-      }
-      .picpick-template-add {
-        display: flex;
-        gap: 6px;
-      }
-      .picpick-template-add input {
-        flex: 1;
-        padding: 6px 8px;
-      }
-      .picpick-btn-small {
-        padding: 6px 12px;
-        border: none;
-        border-radius: 4px;
-        font-size: 12px;
-        background: #e0e7ff;
-        color: #4f46e5;
-        cursor: pointer;
-      }
-      .picpick-btn-small:hover {
-        background: #c7d2fe;
-      }
-      .picpick-dialog-btn-save {
-        width: 100%;
-        background: #10b981;
-        color: white;
-        margin-top: 8px;
-      }
-      .picpick-dialog-btn-save:hover {
-        background: #059669;
-      }
     </style>
     <button id="picpick-btn" title="画像をスキャン / ドラッグで移動">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -487,33 +394,14 @@ function createOverlay(): void {
             <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
         </div>
+        <div class="picpick-save-destination">
+          <label>保存先</label>
+          <select id="picpick-save-destination-select" class="picpick-preset-select">
+            <option value="default">デフォルト</option>
+            <option value="choose">保存場所を選択</option>
+          </select>
+        </div>
         <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
-        <!-- 設定パネル -->
-        <details class="picpick-settings-panel">
-          <summary class="picpick-settings-toggle">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
-            設定
-          </summary>
-          <div class="picpick-settings-content">
-            <div class="picpick-setting-item">
-              <label>保存名プリセットのテンプレート</label>
-              <input type="text" id="picpick-filename-template" value="{date}_{title}_{index}">
-            </div>
-            <div class="picpick-setting-item">
-              <label>保存フォルダ</label>
-              <input type="text" id="picpick-download-folder" value="picpick">
-            </div>
-            <div class="picpick-setting-item">
-              <label>このルールの保存名プリセット</label>
-              <div id="picpick-custom-template-list" class="picpick-template-list"></div>
-              <div class="picpick-template-add">
-                <input type="text" id="picpick-new-template" placeholder="表示名">
-                <button id="picpick-add-template" class="picpick-btn-small">追加</button>
-              </div>
-            </div>
-            <button id="picpick-save-settings" class="picpick-dialog-btn picpick-dialog-btn-save">設定を保存</button>
-          </div>
-        </details>
         
         <div class="picpick-dialog-buttons">
           <button class="picpick-dialog-btn picpick-dialog-btn-cancel" id="picpick-cancel-btn">キャンセル</button>
@@ -569,14 +457,7 @@ function createOverlay(): void {
   const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
   const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
   const filenamePresetSelect = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
-
-  // 設定パネルのイベント
-  const filenameTemplateInput = document.getElementById('picpick-filename-template') as HTMLInputElement;
-  const downloadFolderInput = document.getElementById('picpick-download-folder') as HTMLInputElement;
-  const customTemplateList = document.getElementById('picpick-custom-template-list') as HTMLDivElement;
-  const newTemplateInput = document.getElementById('picpick-new-template') as HTMLInputElement;
-  const addTemplateBtn = document.getElementById('picpick-add-template') as HTMLButtonElement;
-  const saveSettingsBtn = document.getElementById('picpick-save-settings') as HTMLButtonElement;
+  const saveDestinationSelect = document.getElementById('picpick-save-destination-select') as HTMLSelectElement;
 
   filenamePresetSelect?.addEventListener('change', () => {
     const ruleId = currentSettings.activeRuleId || 'generic';
@@ -599,54 +480,8 @@ function createOverlay(): void {
   // カスタム名入力
   customNameInput?.addEventListener('input', updateOverlayFilenamePreview);
 
-  // テンプレート追加
-  addTemplateBtn?.addEventListener('click', () => {
-    const label = newTemplateInput?.value.trim();
-    const template = filenameTemplateInput?.value.trim();
-    const ruleId = currentSettings.activeRuleId || 'generic';
-    if (!label || !template) return;
-
-    if (!currentSettings.ruleFilenamePresets) currentSettings.ruleFilenamePresets = {};
-    if (!currentSettings.ruleFilenamePresets[ruleId]) currentSettings.ruleFilenamePresets[ruleId] = [];
-    if (currentSettings.ruleFilenamePresets[ruleId].some((preset) => preset.label === label || preset.template === template)) return;
-
-    const filenamePreset = {
-      id: `overlay-${Date.now()}`,
-      label,
-      template,
-    };
-    currentSettings.ruleFilenamePresets[ruleId].push(filenamePreset);
-    if (!currentSettings.ruleSessionSettings) currentSettings.ruleSessionSettings = {};
-    currentSettings.ruleSessionSettings[ruleId] = {
-      ...(currentSettings.ruleSessionSettings[ruleId] || {} as RuleSessionSettings),
-      selectedFilenamePresetId: filenamePreset.id,
-      namingMode: template.includes('{custom}') ? 'custom' : 'template',
-      customName: customNameInput?.value || '',
-      selectedPreset: presetSelect?.value || '',
-    };
-    currentSettings.namingMode = currentSettings.ruleSessionSettings[ruleId]!.namingMode;
-    newTemplateInput.value = '';
-    renderOverlayCustomTemplates();
-    updateFilenamePresetDropdown();
-  });
-
-  // 設定保存
-  saveSettingsBtn?.addEventListener('click', async () => {
-    currentSettings.filenameTemplate = filenameTemplateInput?.value || currentSettings.filenameTemplate;
-    currentSettings.downloadFolder = downloadFolderInput?.value || currentSettings.downloadFolder;
-
-    if (isExtensionContextValid()) {
-      try {
-        currentSettings = normalizeSettings(currentSettings);
-        await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: currentSettings });
-        saveSettingsBtn.textContent = '保存しました!';
-        setTimeout(() => {
-          saveSettingsBtn.textContent = '設定を保存';
-        }, 1500);
-      } catch (e) {
-        console.error('Settings save failed:', e);
-      }
-    }
+  saveDestinationSelect?.addEventListener('change', async () => {
+    currentSettings.selectedDownloadFolderPresetId = saveDestinationSelect.value;
   });
 
 }
@@ -672,6 +507,7 @@ async function handleScanClick(): Promise<void> {
     if (!extractor) throw new Error('非対応サイト');
 
     currentSettings = await getSettings();
+    currentSettings.activeRuleId = getRuleIdForCurrentPage(url);
     await scrollBeforeScanIfEnabled(currentSettings, (current, total) => {
       statusText.textContent = `スクロール中... ${current}/${total}`;
     });
@@ -713,6 +549,7 @@ async function handleRescan(): Promise<void> {
     if (!extractor) throw new Error('非対応サイト');
 
     currentSettings = await getSettings();
+    currentSettings.activeRuleId = getRuleIdForCurrentPage(url);
     await scrollBeforeScanIfEnabled(currentSettings);
     scannedImages = await extractor.extractImages();
     updateFilteredCount();
@@ -894,6 +731,7 @@ function showConfirmDialog(): void {
   updateFilteredCount();
   initOverlayNamingMode();
   updateFilenamePresetDropdown();
+  updateSaveDestinationDropdown();
   dialog.classList.add('show');
 }
 
@@ -959,6 +797,7 @@ function switchRule(ruleId: string): void {
   // プリセットドロップダウンを更新
   updatePresetDropdown();
   updateFilenamePresetDropdown();
+  updateSaveDestinationDropdown();
 
   // 新しいルールの設定を復元
   const ruleSetting = currentSettings.ruleSessionSettings?.[ruleId];
@@ -1030,37 +869,27 @@ function updateOverlayFilenamePreview(): void {
   if (!previewEl) return;
 
   const name = customNameInput?.value.trim() || 'name';
-  const date = new Date().toISOString().split('T')[0];
-  previewEl.textContent = date + '_' + name + '_01.jpg';
+  const ruleId = currentSettings.activeRuleId || 'generic';
+  const preset = getSelectedFilenamePreset(currentSettings, ruleId);
+  const previewImage = scannedImages[0] || createPreviewImageInfo();
+  previewEl.textContent = generateFilename(preset.template, previewImage, 1, name);
 }
 
-// オーバーレイのカスタム名テンプレートリストを描画
-function renderOverlayCustomTemplates(): void {
-  const list = document.getElementById('picpick-custom-template-list');
-  if (!list) return;
-
-  const ruleId = currentSettings.activeRuleId || 'generic';
-  const presets = getRuleFilenamePresets(currentSettings, ruleId);
-
-  if (presets.length === 0) {
-    list.innerHTML = '<p style="font-size: 11px; color: #9ca3af;">登録なし</p>';
-    return;
-  }
-
-  list.innerHTML = presets
-    .map((preset, i) => '<div class="picpick-template-item"><span>' + preset.label + '</span><button data-index="' + i + '"' + (preset.id === 'default' || preset.id === 'manual' ? ' disabled' : '') + '>×</button></div>')
-    .join('');
-
-  list.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt((e.target as HTMLElement).dataset.index || '0');
-      const targetPresets = currentSettings.ruleFilenamePresets?.[ruleId];
-      if (!targetPresets || targetPresets[index]?.id === 'default' || targetPresets[index]?.id === 'manual') return;
-      targetPresets.splice(index, 1);
-      renderOverlayCustomTemplates();
-      updateFilenamePresetDropdown();
-    });
-  });
+function createPreviewImageInfo(): ImageInfo {
+  return {
+    url: 'https://example.invalid/image.jpg',
+    originalUrl: 'https://example.invalid/image.jpg',
+    width: 1200,
+    height: 1600,
+    index: 1,
+    metadata: {
+      creator: 'creator',
+      postTitle: 'title',
+      postId: 'post',
+      postDate: new Date(),
+      originalFilename: 'image.jpg',
+    },
+  };
 }
 
 function updateFilenamePresetDropdown(): void {
@@ -1083,27 +912,52 @@ function updateFilenamePresetDropdown(): void {
   updateCustomNameVisibility();
 }
 
+function updateSaveDestinationDropdown(): void {
+  const select = document.getElementById('picpick-save-destination-select') as HTMLSelectElement;
+  if (!select) return;
+
+  const selectedId = currentSettings.selectedDownloadFolderPresetId || 'downloads';
+  select.innerHTML = '';
+
+  const downloadsOption = document.createElement('option');
+  downloadsOption.value = 'downloads';
+  downloadsOption.textContent = 'ダウンロードフォルダ';
+  select.appendChild(downloadsOption);
+
+  for (const preset of currentSettings.downloadFolderPresets || []) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = preset.label || preset.folder;
+    select.appendChild(option);
+  }
+
+  select.value = Array.from(select.options).some((option) => option.value === selectedId)
+    ? selectedId
+    : 'downloads';
+  currentSettings.selectedDownloadFolderPresetId = select.value;
+}
+
 function updateCustomNameVisibility(): void {
   const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
+  const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
   const ruleId = currentSettings.activeRuleId || 'generic';
   const preset = getSelectedFilenamePreset(currentSettings, ruleId);
   if (customNameSection) {
     customNameSection.style.display = preset.template.includes('{custom}') ? 'block' : 'none';
   }
+  if (customNameInput) {
+    customNameInput.placeholder = preset.template.includes('第{custom}話')
+      ? '例: 015'
+      : 'ファイル名を入力';
+  }
 }
 
 // オーバーレイのカスタム名モードを初期化
 function initOverlayNamingMode(): void {
-  const filenameTemplateInput = document.getElementById('picpick-filename-template') as HTMLInputElement;
-  const downloadFolderInput = document.getElementById('picpick-download-folder') as HTMLInputElement;
-
   updateCustomNameVisibility();
 
-  if (filenameTemplateInput) filenameTemplateInput.value = currentSettings.filenameTemplate;
-  if (downloadFolderInput) downloadFolderInput.value = currentSettings.downloadFolder;
-
-  renderOverlayCustomTemplates();
   updateFilenamePresetDropdown();
+  updateSaveDestinationDropdown();
   updateOverlayFilenamePreview();
 }
 
@@ -1185,27 +1039,28 @@ async function handleConfirmDownload(): Promise<void> {
       throw new Error('拡張機能が更新されました。ページを再読み込みしてください。');
     }
 
-    const result = await new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
-      try {
-        const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
-        const customName = customNameInput?.value.trim() || undefined;
+    const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
+    const customName = customNameInput?.value.trim() || undefined;
 
-        chrome.runtime.sendMessage({
-          type: 'DOWNLOAD_IMAGES',
-          images: filteredImages,
-          settings,
-          customName,
-        }, (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
-            return;
-          }
-          resolve(response);
-        });
-      } catch {
-        reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
-      }
-    });
+    const result = await new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage({
+            type: 'DOWNLOAD_IMAGES',
+            images: filteredImages,
+            settings,
+            customName,
+            saveAs: false,
+          }, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
+              return;
+            }
+            resolve(response);
+          });
+        } catch {
+          reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
+        }
+      });
 
     if (result.error) {
       statusText.textContent = `エラー: ${result.error}`;

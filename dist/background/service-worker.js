@@ -483,18 +483,22 @@ const DEFAULT_RULE_FILENAME_PRESETS = {
     generic: [
         { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     patreon: [
         { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     pixiv_fanbox: [
         { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     x: [
         { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
         { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
 };
 // デフォルトサイトルールをインポート（循環参照を避けるため遅延インポート）
@@ -521,7 +525,11 @@ const DEFAULT_SETTINGS = {
     minWidth: 800,
     minHeight: 0,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-    downloadFolder: 'picpick',
+    downloadFolder: '',
+    downloadFolderPresets: [
+        { id: 'picpick', label: 'picpick', folder: 'picpick' },
+    ],
+    selectedDownloadFolderPresetId: 'downloads',
     scanScrollEnabled: false,
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
@@ -782,8 +790,20 @@ const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
 function cloneFilenamePresets(source) {
     return Object.fromEntries(Object.entries(source).map(([ruleId, presets]) => [
         ruleId,
-        presets.map((preset) => ({ ...preset })),
+        presets.map((preset) => normalizeFilenamePreset(preset)),
     ]));
+}
+function ensureIndexInTemplate(template) {
+    const trimmed = template.trim();
+    if (!trimmed || trimmed.includes('{index}'))
+        return trimmed;
+    return `${trimmed.replace(/_+$/, '')}_{index}`;
+}
+function normalizeFilenamePreset(preset) {
+    return {
+        ...preset,
+        template: ensureIndexInTemplate(preset.template),
+    };
 }
 function makePresetId(prefix, value, index) {
     return `${prefix}-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset'}`;
@@ -792,10 +812,11 @@ function legacyNameToTemplate(value) {
     return value.includes('{') ? value : `{date}_${value}_{index}`;
 }
 function addUniquePreset(presets, preset) {
-    if (presets.some((existing) => existing.id === preset.id || existing.template === preset.template)) {
+    const normalizedPreset = normalizeFilenamePreset(preset);
+    if (presets.some((existing) => existing.id === normalizedPreset.id || existing.template === normalizedPreset.template)) {
         return;
     }
-    presets.push(preset);
+    presets.push(normalizedPreset);
 }
 function mergeSizePresets(saved) {
     const existing = Array.isArray(saved)
@@ -812,6 +833,34 @@ function mergeSizePresets(saved) {
         ...existing,
         ...DEFAULT_SIZE_PRESETS.filter((preset) => !existingNames.has(preset.name)),
     ];
+}
+function sanitizeDownloadFolder(folder) {
+    return folder
+        .replace(/\\/g, '/')
+        .split('/')
+        .map((part) => part.trim().replace(/[<>:"\\|?*\x00-\x1f]/g, '_'))
+        .filter(Boolean)
+        .join('/');
+}
+function makeFolderPresetId(folder, index) {
+    return `folder-${index}-${folder.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'downloads'}`;
+}
+function mergeDownloadFolderPresets(saved) {
+    const defaults = (DEFAULT_SETTINGS.downloadFolderPresets || []).map((preset) => ({ ...preset }));
+    const result = [...defaults];
+    const seenFolders = new Set(result.map((preset) => preset.folder));
+    for (const [index, preset] of (saved || []).entries()) {
+        const folder = sanitizeDownloadFolder(preset?.folder || '');
+        if (!folder || seenFolders.has(folder))
+            continue;
+        result.push({
+            id: preset.id || makeFolderPresetId(folder, index),
+            label: preset.label || folder,
+            folder,
+        });
+        seenFolders.add(folder);
+    }
+    return result;
 }
 function normalizeSettings(input) {
     const saved = input || {};
@@ -867,6 +916,8 @@ function normalizeSettings(input) {
             ...DEFAULT_SETTINGS.ruleSpecificPresets,
             ...(saved.ruleSpecificPresets || {}),
         },
+        downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+        selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
         ruleFilenamePresets,
     };
     const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
@@ -886,7 +937,20 @@ function normalizeSettings(input) {
             session.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
         }
     }
+    const folderPresetIds = new Set([
+        'downloads',
+        ...(settings.downloadFolderPresets || []).map((preset) => preset.id),
+    ]);
+    if (settings.selectedDownloadFolderPresetId && !folderPresetIds.has(settings.selectedDownloadFolderPresetId)) {
+        settings.selectedDownloadFolderPresetId = DEFAULT_SETTINGS.selectedDownloadFolderPresetId;
+    }
     return settings;
+}
+function getSelectedDownloadFolder(settings) {
+    const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
+    if (selectedId === 'downloads')
+        return '';
+    return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
 }
 function getRuleFilenamePresets(settings, ruleId) {
     return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];
@@ -939,28 +1003,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 });
 async function handleDownload(message) {
-    const { images, customName } = message;
+    const { images, customName, saveAs } = message;
     const settings = normalizeSettings(message.settings);
     let success = 0;
     let failed = 0;
     const errors = [];
     const startIndexes = new Map();
     const attemptedCounts = new Map();
+    const activeRuleId = settings.activeRuleId || 'generic';
+    const downloadFolder = getSelectedDownloadFolder(settings);
     for (let i = 0; i < images.length; i++) {
         const image = images[i];
         let basePrefix;
         let filename;
-        const activeRuleId = settings.activeRuleId || 'generic';
         const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
         basePrefix = generateBasePrefix(selectedFilenamePreset.template, image, customName || '');
-        const nextIndex = await getNextBatchIndex(basePrefix, settings.downloadFolder, startIndexes, attemptedCounts);
+        const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);
         filename = generateFilename(selectedFilenamePreset.template, image, nextIndex, customName || '');
         attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
         try {
-            const downloadPath = settings.downloadFolder
-                ? `${settings.downloadFolder}/${filename}`
+            const downloadPath = !saveAs && downloadFolder
+                ? `${downloadFolder}/${filename}`
                 : filename;
-            await downloadFileWithRetry(image.url, downloadPath);
+            await downloadFileWithRetry(image.url, downloadPath, saveAs === true);
             success++;
             // 進捗通知
             notifyProgress(i + 1, images.length);
@@ -982,11 +1047,11 @@ async function getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attem
     }
     return startIndexes.get(basePrefix) + (attemptedCounts.get(basePrefix) || 0);
 }
-async function downloadFileWithRetry(url, filename, retries = 2) {
+async function downloadFileWithRetry(url, filename, saveAs = false, retries = 2) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            await downloadFile(url, filename);
+            await downloadFile(url, filename, saveAs);
             return;
         }
         catch (error) {
@@ -998,22 +1063,38 @@ async function downloadFileWithRetry(url, filename, retries = 2) {
     }
     throw lastError || new Error('Download failed');
 }
-function downloadFile(url, filename) {
+function downloadFile(url, filename, saveAs) {
     return new Promise((resolve, reject) => {
+        let downloadIdForFilename = null;
+        const filenameListener = (item, suggest) => {
+            if ((downloadIdForFilename !== null && item.id !== downloadIdForFilename) ||
+                !isSameDownloadUrl(item.url, url)) {
+                return;
+            }
+            suggest({
+                filename,
+                conflictAction: 'uniquify',
+            });
+        };
+        chrome.downloads.onDeterminingFilename.addListener(filenameListener);
         chrome.downloads.download({
             url,
             filename,
-            saveAs: false,
+            saveAs,
         }, (downloadId) => {
             if (chrome.runtime.lastError) {
+                chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
                 reject(new Error(chrome.runtime.lastError.message));
             }
             else if (downloadId === undefined) {
+                chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
                 reject(new Error('Download failed'));
             }
             else {
+                downloadIdForFilename = downloadId;
                 let settled = false;
                 const cleanup = () => {
+                    chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
                     chrome.downloads.onChanged.removeListener(listener);
                     clearTimeout(timeoutId);
                 };
@@ -1058,6 +1139,23 @@ function downloadFile(url, filename) {
             }
         });
     });
+}
+function isSameDownloadUrl(downloadUrl, requestedUrl) {
+    if (!downloadUrl)
+        return false;
+    if (downloadUrl === requestedUrl)
+        return true;
+    try {
+        const download = new URL(downloadUrl);
+        const requested = new URL(requestedUrl);
+        return download.origin === requested.origin
+            && download.pathname === requested.pathname
+            && download.searchParams.get('format') === requested.searchParams.get('format')
+            && download.searchParams.get('name') === requested.searchParams.get('name');
+    }
+    catch {
+        return false;
+    }
 }
 function notifyProgress(current, total) {
     // 全てのタブに進捗を通知（Content Scriptへ）
