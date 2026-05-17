@@ -2905,7 +2905,10 @@ function addSaveButton(article, actionBar) {
     button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        handleInlineDownload(article, button);
+        handleInlineDownload(article, button).catch(() => {
+            setButtonState(button, 'error');
+            window.setTimeout(() => updateButtonStateForArticle(article), 1600);
+        });
     });
     wrapper.appendChild(button);
     actionBar.appendChild(wrapper);
@@ -2980,8 +2983,13 @@ async function extractDownloadMediaFromArticle(article) {
     if (!metadata.postId || metadata.postId === 'unknown' || !hasPotentialVideo(article)) {
         return images;
     }
-    const videos = await fetchTweetVideos(metadata);
-    return dedupeMedia([...images, ...videos]);
+    try {
+        const videos = await fetchTweetVideos(metadata);
+        return dedupeMedia([...images, ...videos]);
+    }
+    catch {
+        return images;
+    }
 }
 function extractImagesFromArticle(article) {
     const metadata = extractMetadataFromArticle(article);

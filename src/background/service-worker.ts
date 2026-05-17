@@ -312,12 +312,17 @@ interface SyndicationTweet {
   };
 }
 
+function generateSyndicationToken(id: string): string {
+  return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '');
+}
+
 async function getXTweetMedia(postId: string): Promise<XTweetMedia[]> {
   if (!/^\d+$/.test(postId)) {
     throw new Error('Invalid tweet ID');
   }
 
-  const url = `https://cdn.syndication.twimg.com/tweet-result?id=${encodeURIComponent(postId)}&lang=ja&token=picpick`;
+  const token = generateSyndicationToken(postId);
+  const url = `https://cdn.syndication.twimg.com/tweet-result?id=${encodeURIComponent(postId)}&lang=ja&token=${token}`;
   const response = await fetch(url, {
     credentials: 'omit',
     cache: 'no-store',

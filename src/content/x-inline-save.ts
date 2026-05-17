@@ -85,7 +85,10 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
   button.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    handleInlineDownload(article, button);
+    handleInlineDownload(article, button).catch(() => {
+      setButtonState(button, 'error');
+      window.setTimeout(() => updateButtonStateForArticle(article), 1600);
+    });
   });
 
   wrapper.appendChild(button);
@@ -168,8 +171,12 @@ async function extractDownloadMediaFromArticle(article: HTMLElement): Promise<Im
     return images;
   }
 
-  const videos = await fetchTweetVideos(metadata);
-  return dedupeMedia([...images, ...videos]);
+  try {
+    const videos = await fetchTweetVideos(metadata);
+    return dedupeMedia([...images, ...videos]);
+  } catch {
+    return images;
+  }
 }
 
 function extractImagesFromArticle(article: HTMLElement): ImageInfo[] {
