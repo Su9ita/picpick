@@ -635,9 +635,11 @@ function applyOverlayPosition(left: number, top: number): void {
   if (!overlayContainer) return;
 
   const position = clampOverlayPosition(left, top);
-  overlayContainer.style.left = `${position.left}px`;
+  const overlayWidth = overlayContainer.offsetWidth || 44;
+  const fromRight = window.innerWidth - position.left - overlayWidth;
+  overlayContainer.style.right = `${fromRight}px`;
   overlayContainer.style.top = `${position.top}px`;
-  overlayContainer.style.right = 'auto';
+  overlayContainer.style.left = 'auto';
 }
 
 function restoreOverlayPosition(): void {
@@ -646,11 +648,15 @@ function restoreOverlayPosition(): void {
   try {
     chrome.storage.sync.get(OVERLAY_POSITION_KEY, (result) => {
       const position = result?.[OVERLAY_POSITION_KEY];
-      if (
-        position &&
-        typeof position.left === 'number' &&
-        typeof position.top === 'number'
-      ) {
+      if (!position || typeof position.top !== 'number') return;
+
+      if (typeof position.fromRight === 'number' && overlayContainer) {
+        // 新フォーマット: 右端からの距離で復元（ウィンドウサイズ変化に追従）
+        overlayContainer.style.right = `${position.fromRight}px`;
+        overlayContainer.style.top = `${position.top}px`;
+        overlayContainer.style.left = 'auto';
+      } else if (typeof position.left === 'number') {
+        // 旧フォーマット: 互換性のため一度だけ変換して適用
         applyOverlayPosition(position.left, position.top);
       }
     });
@@ -663,9 +669,11 @@ function saveOverlayPosition(left: number, top: number): void {
   if (!isExtensionContextValid()) return;
 
   const position = clampOverlayPosition(left, top);
+  const overlayWidth = overlayContainer?.offsetWidth || 44;
+  const fromRight = window.innerWidth - position.left - overlayWidth;
   try {
     chrome.storage.sync.set({
-      [OVERLAY_POSITION_KEY]: position,
+      [OVERLAY_POSITION_KEY]: { fromRight, top: position.top },
     });
   } catch {
     // 位置保存に失敗してもスキャン機能には影響させない
