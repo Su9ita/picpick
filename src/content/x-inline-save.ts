@@ -6,11 +6,17 @@ import { normalizeSettings } from '../utils/settings-normalizer';
 const PROCESSED_ATTR = 'data-picpick-x-inline';
 const STORAGE_KEY = 'picpickXDownloadedMedia';
 const SCAN_DEBOUNCE_MS = 250;
+const SETTINGS_CACHE_MS = 5000;
+const EXTRACTION_RETRY_DELAYS_MS = [150, 450, 900];
+const ERROR_RESET_MS = 3500;
 
 let observer: MutationObserver | null = null;
 let scanTimer: number | null = null;
 let styleInjected = false;
 let downloadedKeys = new Set<string>();
+let cachedDownloadSettings: { settings: Settings; expiresAt: number } | null = null;
+let pendingSettingsRequest: Promise<Settings> | null = null;
+const activeDownloadKeys = new Set<string>();
 
 type ButtonState = 'ready' | 'loading' | 'saved' | 'error';
 
@@ -85,9 +91,9 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
   button.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    handleInlineDownload(article, button).catch(() => {
-      setButtonState(button, 'error');
-      window.setTimeout(() => updateButtonStateForArticle(article), 1600);
+    handleInlineDownload(article, button).catch((error) => {
+      setButtonError(button, getErrorMessage(error));
+      window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
     });
   });
 
@@ -97,26 +103,37 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
 }
 
 async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElement): Promise<void> {
-  const media = await extractDownloadMediaFromArticle(article);
+  if (button.dataset.state === 'loading') return;
 
-  if (media.length === 0) {
-    setButtonState(button, 'error');
-    window.setTimeout(() => updateButtonStateForArticle(article), 1600);
+  const downloadKey = getArticleDownloadKey(article);
+  if (activeDownloadKeys.has(downloadKey)) {
+    setButtonState(button, 'loading');
     return;
   }
 
+  activeDownloadKeys.add(downloadKey);
   setButtonState(button, 'loading');
 
   try {
+    const media = await extractDownloadMediaFromArticleWithRetry(article);
+
+    if (media.length === 0) {
+      setButtonError(button, '画像/動画を取得できませんでした');
+      window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
+      return;
+    }
+
     const settings = await getDownloadSettings();
     const result = await sendDownloadMessage({
       type: 'DOWNLOAD_IMAGES',
       images: media,
       settings,
+      waitForCompletion: true,
+      interDownloadDelayMs: 0,
     });
 
     if (result.error || result.success !== media.length || result.failed) {
-      throw new Error(result.error || 'Download failed');
+      throw new Error(result.error || result.errors?.[0] || 'Download failed');
     }
 
     for (const item of media) {
@@ -125,9 +142,11 @@ async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElem
     await saveDownloadedKeys(downloadedKeys);
     button.dataset.count = String(media.length);
     setButtonState(button, 'saved');
-  } catch {
-    setButtonState(button, 'error');
-    window.setTimeout(() => updateButtonStateForArticle(article), 1600);
+  } catch (error) {
+    setButtonError(button, getErrorMessage(error));
+    window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
+  } finally {
+    activeDownloadKeys.delete(downloadKey);
   }
 }
 
@@ -147,6 +166,7 @@ function updateButtonStateForArticle(article: HTMLElement): void {
 
 function setButtonState(button: HTMLButtonElement, state: ButtonState): void {
   button.dataset.state = state;
+  delete button.dataset.error;
   button.disabled = state === 'loading';
   button.innerHTML = getIconSvg(state);
 
@@ -162,6 +182,27 @@ function setButtonState(button: HTMLButtonElement, state: ButtonState): void {
       ? '保存に失敗しました'
       : `Picpickで画像/動画を保存 (${button.dataset.count || '?'}件)`;
   }
+}
+
+function setButtonError(button: HTMLButtonElement, message: string): void {
+  button.dataset.error = message;
+  setButtonState(button, 'error');
+  button.dataset.error = message;
+  button.setAttribute('aria-label', `Picpickで保存失敗: ${message}`);
+  button.title = `保存に失敗しました: ${message}`;
+}
+
+async function extractDownloadMediaFromArticleWithRetry(article: HTMLElement): Promise<ImageInfo[]> {
+  let media = await extractDownloadMediaFromArticle(article);
+  if (media.length > 0) return media;
+
+  for (const delay of EXTRACTION_RETRY_DELAYS_MS) {
+    await sleep(delay);
+    media = await extractDownloadMediaFromArticle(article);
+    if (media.length > 0) return media;
+  }
+
+  return [];
 }
 
 async function extractDownloadMediaFromArticle(article: HTMLElement): Promise<ImageInfo[]> {
@@ -426,26 +467,53 @@ function getMediaKey(image: ImageInfo): string {
   return `${image.metadata.postId}:${mediaId}`;
 }
 
+function getArticleDownloadKey(article: HTMLElement): string {
+  const metadata = extractMetadataFromArticle(article);
+  const images = extractImagesFromArticle(article);
+  if (images.length === 0) return metadata.postId || 'unknown';
+  return images.map(getMediaKey).join('|');
+}
+
 async function getDownloadSettings(): Promise<Settings> {
-  const settings = await new Promise<Settings>((resolve) => {
+  const now = Date.now();
+  if (cachedDownloadSettings && cachedDownloadSettings.expiresAt > now) {
+    return cachedDownloadSettings.settings;
+  }
+
+  if (pendingSettingsRequest) {
+    return pendingSettingsRequest;
+  }
+
+  pendingSettingsRequest = new Promise<Settings>((resolve) => {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
       resolve(response && !response.error ? response : DEFAULT_SETTINGS);
     });
+  }).then((settings) => {
+    const normalized = normalizeSettings({
+      ...settings,
+      activeRuleId: 'x',
+      minWidth: 0,
+      minHeight: 0,
+      selectedPreset: '',
+    });
+
+    cachedDownloadSettings = {
+      settings: normalized,
+      expiresAt: Date.now() + SETTINGS_CACHE_MS,
+    };
+    return normalized;
+  }).finally(() => {
+    pendingSettingsRequest = null;
   });
 
-  return normalizeSettings({
-    ...settings,
-    activeRuleId: 'x',
-    minWidth: 0,
-    minHeight: 0,
-    selectedPreset: '',
-  });
+  return pendingSettingsRequest;
 }
 
 async function sendDownloadMessage(message: DownloadImagesMessage): Promise<{
   error?: string;
   success?: number;
   failed?: number;
+  errors?: string[];
 }> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -456,6 +524,14 @@ async function sendDownloadMessage(message: DownloadImagesMessage): Promise<{
       resolve(response || {});
     });
   });
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : 'Download failed';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function sendXTweetMediaMessage(postId: string): Promise<XTweetMedia[]> {

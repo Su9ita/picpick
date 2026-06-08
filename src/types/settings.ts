@@ -41,6 +41,7 @@ export interface Settings {
   scanScrollEnabled: boolean;  // スキャン時にスクロールしてLazy Loadを発火
   skipDuplicates: boolean;
   overlayEnabled: boolean;  // オーバーレイの表示/非表示
+  includeDateInFilename: boolean;  // ファイル名に日付を含めるか
   creatorList: string[];      // 登録済みクリエイター名リスト
   lastSelectedCreator: string; // 前回選択したクリエイター名
 
@@ -91,23 +92,23 @@ export const DEFAULT_SIZE_PRESETS: SizePreset[] = [
 
 export const DEFAULT_RULE_FILENAME_PRESETS: { [ruleId: string]: FilenamePreset[] } = {
   generic: [
-    { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
-    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'default', label: '標準', template: '{title}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
     { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
   patreon: [
-    { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
-    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'default', label: 'Patreon 標準', template: '{creator}_{title}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
     { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
   pixiv_fanbox: [
-    { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
-    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'default', label: 'Fanbox 標準', template: '{creator}_{title}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
     { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
   x: [
-    { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
-    { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+    { id: 'default', label: 'X 標準', template: '{creator}_{index}' },
+    { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
     { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
   ],
 };
@@ -145,6 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scanScrollEnabled: false,
   skipDuplicates: true,
   overlayEnabled: true,  // デフォルトでオーバーレイを表示
+  includeDateInFilename: true,  // デフォルトで日付を含める
   creatorList: [],
   lastSelectedCreator: '',
   sizePresets: DEFAULT_SIZE_PRESETS,

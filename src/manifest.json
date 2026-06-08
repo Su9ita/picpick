@@ -1,18 +1,28 @@
 {
   "manifest_version": 3,
   "name": "picpick",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "あらゆるサイトから画像を一括ダウンロード",
   "permissions": [
     "downloads",
     "storage",
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_pixiv",
+        "enabled": true,
+        "path": "rules/pixiv_referer.json"
+      }
+    ]
+  },
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"

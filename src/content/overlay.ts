@@ -5,7 +5,7 @@ import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
 import { getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
-import { generateFilename } from '../utils/filename-template';
+import { generateFilename, applyDateToTemplate } from '../utils/filename-template';
 
 let overlayContainer: HTMLDivElement | null = null;
 let isDownloading = false;
@@ -341,6 +341,22 @@ function createOverlay(): void {
         color: #6366f1;
         font-family: monospace;
       }
+      .picpick-include-date-row {
+        margin-bottom: 8px;
+      }
+      .picpick-include-date-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: #374151;
+        cursor: pointer;
+      }
+      .picpick-include-date-label input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+        cursor: pointer;
+      }
     </style>
     <button id="picpick-btn" title="画像をスキャン / ドラッグで移動">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -393,6 +409,12 @@ function createOverlay(): void {
             <label>最小横幅 (px)</label>
             <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
+        </div>
+        <div class="picpick-include-date-row">
+          <label class="picpick-include-date-label">
+            <input type="checkbox" id="picpick-include-date">
+            <span>ファイル名に日付 (YYYY-MM-DD) を含める</span>
+          </label>
         </div>
         <div class="picpick-save-destination">
           <label>保存先</label>
@@ -482,6 +504,12 @@ function createOverlay(): void {
 
   saveDestinationSelect?.addEventListener('change', async () => {
     currentSettings.selectedDownloadFolderPresetId = saveDestinationSelect.value;
+  });
+
+  const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
+  includeDateCheckbox?.addEventListener('change', () => {
+    currentSettings.includeDateInFilename = includeDateCheckbox.checked;
+    updateOverlayFilenamePreview();
   });
 
 }
@@ -736,6 +764,12 @@ function showConfirmDialog(): void {
   }
   minWidthInput.value = String(currentSettings.minWidth);
 
+  // 日付チェックボックスの初期値を設定
+  const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
+  if (includeDateCheckbox) {
+    includeDateCheckbox.checked = currentSettings.includeDateInFilename !== false;
+  }
+
   updateFilteredCount();
   initOverlayNamingMode();
   updateFilenamePresetDropdown();
@@ -873,14 +907,17 @@ function updateFilteredCount(): void {
 // オーバーレイのファイル名プレビューを更新
 function updateOverlayFilenamePreview(): void {
   const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
+  const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
   const previewEl = document.getElementById('picpick-filename-preview');
   if (!previewEl) return;
 
   const name = customNameInput?.value.trim() || 'name';
   const ruleId = currentSettings.activeRuleId || 'generic';
   const preset = getSelectedFilenamePreset(currentSettings, ruleId);
+  const includeDate = includeDateCheckbox ? includeDateCheckbox.checked : (currentSettings.includeDateInFilename !== false);
+  const template = applyDateToTemplate(preset.template, includeDate);
   const previewImage = scannedImages[0] || createPreviewImageInfo();
-  previewEl.textContent = generateFilename(preset.template, previewImage, 1, name);
+  previewEl.textContent = generateFilename(template, previewImage, 1, name);
 }
 
 function createPreviewImageInfo(): ImageInfo {
@@ -973,6 +1010,10 @@ function initOverlayNamingMode(): void {
 async function handleConfirmDownload(): Promise<void> {
   if (isDownloading) return;
 
+  // クリック直後に確認ボタンを即座に無効化して二重クリックを防止
+  const confirmBtnEl = document.getElementById('picpick-confirm-btn') as HTMLButtonElement;
+  if (confirmBtnEl) confirmBtnEl.disabled = true;
+
   const btn = document.getElementById('picpick-btn') as HTMLButtonElement;
   const status = document.getElementById('picpick-status');
   const statusText = document.getElementById('picpick-status-text');
@@ -980,7 +1021,10 @@ async function handleConfirmDownload(): Promise<void> {
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
 
-  if (!btn || !status || !statusText || !progressBar || !minWidthInput) return;
+  if (!btn || !status || !statusText || !progressBar || !minWidthInput) {
+    if (confirmBtnEl) confirmBtnEl.disabled = false;
+    return;
+  }
 
   // 【新規】ダウンロード前にルール設定を保存
   if (currentSettings.activeRuleId && currentSettings.ruleSessionSettings) {
@@ -1003,6 +1047,12 @@ async function handleConfirmDownload(): Promise<void> {
       selectedFilenamePresetId,
     };
     currentSettings.namingMode = namingMode;
+  }
+
+  // 日付チェックボックスの状態を settings に反映
+  const includeDateCheckboxFinal = document.getElementById('picpick-include-date') as HTMLInputElement;
+  if (includeDateCheckboxFinal) {
+    currentSettings.includeDateInFilename = includeDateCheckboxFinal.checked;
   }
 
   hideConfirmDialog();
@@ -1042,6 +1092,12 @@ async function handleConfirmDownload(): Promise<void> {
 
     statusText.textContent = `${filteredImages.length}枚をダウンロード中...`;
 
+    // pixiv CDN 画像はコンテンツスクリプト経由でプリフェッチ
+    // (service worker から直接 fetch しても Referer が設定されないため)
+    const imagesToDownload = await prefetchPixivImages(filteredImages, (current, total) => {
+      statusText.textContent = `画像を取得中... ${current}/${total}`;
+    });
+
     // ダウンロード実行
     if (!isExtensionContextValid()) {
       throw new Error('拡張機能が更新されました。ページを再読み込みしてください。');
@@ -1050,25 +1106,30 @@ async function handleConfirmDownload(): Promise<void> {
     const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
     const customName = customNameInput?.value.trim() || undefined;
 
-    const result = await new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
-        try {
-          chrome.runtime.sendMessage({
-            type: 'DOWNLOAD_IMAGES',
-            images: filteredImages,
-            settings,
-            customName,
-            saveAs: false,
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
-              return;
-            }
-            resolve(response);
-          });
-        } catch {
-          reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
-        }
-      });
+    const sendMsgPromise = new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'DOWNLOAD_IMAGES',
+          images: imagesToDownload,
+          settings,
+          customName,
+          saveAs: false,
+          waitForCompletion: false,
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
+            return;
+          }
+          resolve(response);
+        });
+      } catch {
+        reject(new Error('拡張機能が更新されました。ページを再読み込みしてください。'));
+      }
+    });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('タイムアウトしました。ページを再読み込みしてください。')), 15000)
+    );
+    const result = await Promise.race([sendMsgPromise, timeoutPromise]);
 
     if (result.error) {
       statusText.textContent = `エラー: ${result.error}`;
@@ -1092,6 +1153,8 @@ async function handleConfirmDownload(): Promise<void> {
     isDownloading = false;
     btn.disabled = false;
     btn.classList.remove('picpick-loading');
+    const confirmBtnFinal = document.getElementById('picpick-confirm-btn') as HTMLButtonElement;
+    if (confirmBtnFinal) confirmBtnFinal.disabled = false;
   }
 }
 
@@ -1190,4 +1253,59 @@ function hideOverlay(): void {
   if (overlayContainer) {
     overlayContainer.style.display = 'none';
   }
+}
+
+// pixiv CDN 画像をコンテンツスクリプト経由でプリフェッチする
+// コンテンツスクリプトは pixiv ページ上で動作するため、
+// ブラウザが自動的に Referer: https://www.pixiv.net/ を付与する
+async function prefetchPixivImages(
+  images: ImageInfo[],
+  onProgress?: (current: number, total: number) => void
+): Promise<ImageInfo[]> {
+  const pixivIndices = images
+    .map((img, i) => i)
+    .filter((i) => images[i].url.includes('i.pximg.net'));
+
+  if (pixivIndices.length === 0) return images;
+
+  const result = [...images];
+  let fetched = 0;
+
+  for (const i of pixivIndices) {
+    try {
+      const response = await fetch(images[i].url, {
+        credentials: 'omit',
+        cache: 'no-store',
+        referrer: 'https://www.pixiv.net/',
+        referrerPolicy: 'strict-origin-when-cross-origin',
+      });
+      if (response.ok) {
+        const blobData = await response.arrayBuffer();
+        const blobMimeType = response.headers.get('content-type') || 'image/jpeg';
+        if (isValidImageResponse(blobMimeType, blobData)) {
+          result[i] = { ...images[i], blobData, blobMimeType, downloadReferrer: 'https://www.pixiv.net/' };
+        }
+      }
+    } catch {
+      // service worker 側の referrer fetch にフォールバック
+    }
+    fetched++;
+    onProgress?.(fetched, pixivIndices.length);
+  }
+
+  return result;
+}
+
+function isValidImageResponse(contentType: string, buffer: ArrayBuffer): boolean {
+  if (contentType.toLowerCase().startsWith('image/')) return true;
+
+  const bytes = new Uint8Array(buffer.slice(0, 12));
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+  const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+  const isWebp =
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+
+  return isJpeg || isPng || isGif || isWebp;
 }

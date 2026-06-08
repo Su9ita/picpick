@@ -9,6 +9,8 @@ import {
 } from '../types/settings';
 
 const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+// チェックボックス導入前のデフォルトIDプリセットから {date}_ を除去するマイグレーション対象
+const DEFAULT_PRESET_IDS = new Set(['default', 'manual', 'custom-index']);
 const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
   '小サイズ除外 (200px)',
   '標準 (400px)',
@@ -151,6 +153,18 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
     });
   }
 
+  // デフォルトIDのプリセットから {date}_ を除去（チェックボックス導入マイグレーション）
+  for (const ruleId of RULE_IDS) {
+    if (ruleFilenamePresets[ruleId]) {
+      ruleFilenamePresets[ruleId] = ruleFilenamePresets[ruleId].map((preset) => {
+        if (DEFAULT_PRESET_IDS.has(preset.id) && preset.template.startsWith('{date}_')) {
+          return { ...preset, template: preset.template.replace(/^\{date\}_/, '') };
+        }
+        return preset;
+      });
+    }
+  }
+
   const settings: Settings = {
     ...DEFAULT_SETTINGS,
     ...saved,
@@ -171,6 +185,7 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
     },
     downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
     selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
+    includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
     ruleFilenamePresets,
   };
 

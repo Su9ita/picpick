@@ -481,23 +481,23 @@ const DEFAULT_SIZE_PRESETS = [
 ];
 const DEFAULT_RULE_FILENAME_PRESETS = {
     generic: [
-        { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: '標準', template: '{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     patreon: [
-        { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: 'Patreon 標準', template: '{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     pixiv_fanbox: [
-        { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: 'Fanbox 標準', template: '{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     x: [
-        { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: 'X 標準', template: '{creator}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
 };
@@ -533,6 +533,7 @@ const DEFAULT_SETTINGS = {
     scanScrollEnabled: false,
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
+    includeDateInFilename: true, // デフォルトで日付を含める
     creatorList: [],
     lastSelectedCreator: '',
     sizePresets: DEFAULT_SIZE_PRESETS,
@@ -590,6 +591,8 @@ const DEFAULT_SETTINGS = {
 /* unused harmony import specifier */ var settings_normalizer_DEFAULT_SETTINGS;
 
 const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+// チェックボックス導入前のデフォルトIDプリセットから {date}_ を除去するマイグレーション対象
+const DEFAULT_PRESET_IDS = new Set(['default', 'manual', 'custom-index']);
 const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
     '小サイズ除外 (200px)',
     '標準 (400px)',
@@ -715,6 +718,17 @@ function normalizeSettings(input) {
             });
         });
     }
+    // デフォルトIDのプリセットから {date}_ を除去（チェックボックス導入マイグレーション）
+    for (const ruleId of RULE_IDS) {
+        if (ruleFilenamePresets[ruleId]) {
+            ruleFilenamePresets[ruleId] = ruleFilenamePresets[ruleId].map((preset) => {
+                if (DEFAULT_PRESET_IDS.has(preset.id) && preset.template.startsWith('{date}_')) {
+                    return { ...preset, template: preset.template.replace(/^\{date\}_/, '') };
+                }
+                return preset;
+            });
+        }
+    }
     const settings = {
         ...DEFAULT_SETTINGS,
         ...saved,
@@ -735,6 +749,7 @@ function normalizeSettings(input) {
         },
         downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
         selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
+        includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
         ruleFilenamePresets,
     };
     const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));

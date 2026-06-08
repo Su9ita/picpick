@@ -481,23 +481,23 @@ const DEFAULT_SIZE_PRESETS = [
 ];
 const DEFAULT_RULE_FILENAME_PRESETS = {
     generic: [
-        { id: 'default', label: '標準', template: '{date}_{title}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: '標準', template: '{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     patreon: [
-        { id: 'default', label: 'Patreon 標準', template: '{date}_{creator}_{title}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: 'Patreon 標準', template: '{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     pixiv_fanbox: [
-        { id: 'default', label: 'Fanbox 標準', template: '{date}_{creator}_{title}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: 'Fanbox 標準', template: '{creator}_{title}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
     x: [
-        { id: 'default', label: 'X 標準', template: '{date}_{creator}_{index}' },
-        { id: 'manual', label: '手入力名', template: '{date}_{custom}_{index}' },
+        { id: 'default', label: 'X 標準', template: '{creator}_{index}' },
+        { id: 'manual', label: '手入力名', template: '{custom}_{index}' },
         { id: 'custom-index', label: '手入力名 + 連番', template: '{custom}_{index}' },
     ],
 };
@@ -533,6 +533,7 @@ const DEFAULT_SETTINGS = {
     scanScrollEnabled: false,
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
+    includeDateInFilename: true, // デフォルトで日付を含める
     creatorList: [],
     lastSelectedCreator: '',
     sizePresets: DEFAULT_SIZE_PRESETS,
@@ -587,6 +588,14 @@ const DEFAULT_SETTINGS = {
 };
 
 ;// ./src/utils/filename-template.ts
+// チェックボックス状態に応じてテンプレートに {date}_ を付与する
+function applyDateToTemplate(template, includeDateInFilename) {
+    if (!includeDateInFilename)
+        return template;
+    if (template.startsWith('{date}'))
+        return template;
+    return `{date}_${template}`;
+}
 // ベースプレフィックスから次の連番を取得（ダウンロード履歴を検索）
 async function findNextIndex(basePrefix, _downloadFolder) {
     return new Promise((resolve) => {
@@ -773,6 +782,8 @@ function sanitizeFilename(filename) {
 ;// ./src/utils/settings-normalizer.ts
 
 const RULE_IDS = ['generic', 'patreon', 'pixiv_fanbox', 'x'];
+// チェックボックス導入前のデフォルトIDプリセットから {date}_ を除去するマイグレーション対象
+const DEFAULT_PRESET_IDS = new Set(['default', 'manual', 'custom-index']);
 const REMOVED_DEFAULT_SIZE_PRESET_NAMES = new Set([
     '小サイズ除外 (200px)',
     '標準 (400px)',
@@ -898,6 +909,17 @@ function normalizeSettings(input) {
             });
         });
     }
+    // デフォルトIDのプリセットから {date}_ を除去（チェックボックス導入マイグレーション）
+    for (const ruleId of RULE_IDS) {
+        if (ruleFilenamePresets[ruleId]) {
+            ruleFilenamePresets[ruleId] = ruleFilenamePresets[ruleId].map((preset) => {
+                if (DEFAULT_PRESET_IDS.has(preset.id) && preset.template.startsWith('{date}_')) {
+                    return { ...preset, template: preset.template.replace(/^\{date\}_/, '') };
+                }
+                return preset;
+            });
+        }
+    }
     const settings = {
         ...DEFAULT_SETTINGS,
         ...saved,
@@ -918,6 +940,7 @@ function normalizeSettings(input) {
         },
         downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
         selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
+        includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
         ruleFilenamePresets,
     };
     const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
@@ -1005,6 +1028,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function handleDownload(message) {
     const { images, customName, saveAs } = message;
     const settings = normalizeSettings(message.settings);
+    const waitForCompletion = message.waitForCompletion !== false;
+    const interDownloadDelayMs = message.interDownloadDelayMs ?? (waitForCompletion ? 500 : 0);
     let success = 0;
     let failed = 0;
     const errors = [];
@@ -1017,21 +1042,32 @@ async function handleDownload(message) {
         let basePrefix;
         let filename;
         const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
-        basePrefix = generateBasePrefix(selectedFilenamePreset.template, image, customName || '');
+        const template = applyDateToTemplate(selectedFilenamePreset.template, settings.includeDateInFilename !== false);
+        basePrefix = generateBasePrefix(template, image, customName || '');
         const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);
-        filename = generateFilename(selectedFilenamePreset.template, image, nextIndex, customName || '');
+        filename = generateFilename(template, image, nextIndex, customName || '');
         attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
         try {
             const downloadPath = !saveAs && downloadFolder
                 ? `${downloadFolder}/${filename}`
                 : filename;
-            await downloadFileWithRetry(image.url, downloadPath, saveAs === true);
+            if (image.blobData) {
+                const dataUrl = arrayBufferToDataUrl(image.blobData, image.blobMimeType || 'application/octet-stream');
+                await downloadFile(dataUrl, downloadPath, saveAs === true, true);
+            }
+            else if (isPixivImageUrl(image.url)) {
+                const dataUrl = await fetchImageAsDataUrl(image.url, image.downloadReferrer || 'https://www.pixiv.net/');
+                await downloadFile(dataUrl, downloadPath, saveAs === true, true);
+            }
+            else {
+                await downloadFileWithRetry(image.url, downloadPath, saveAs === true, waitForCompletion);
+            }
             success++;
             // 進捗通知
             notifyProgress(i + 1, images.length);
             // レート制限対策
-            if (i < images.length - 1) {
-                await sleep(500);
+            if (interDownloadDelayMs > 0 && i < images.length - 1) {
+                await sleep(interDownloadDelayMs);
             }
         }
         catch (error) {
@@ -1047,11 +1083,11 @@ async function getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attem
     }
     return startIndexes.get(basePrefix) + (attemptedCounts.get(basePrefix) || 0);
 }
-async function downloadFileWithRetry(url, filename, saveAs = false, retries = 2) {
+async function downloadFileWithRetry(url, filename, saveAs = false, waitForCompletion = true, retries = 2) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            await downloadFile(url, filename, saveAs);
+            await downloadFile(url, filename, saveAs, waitForCompletion);
             return;
         }
         catch (error) {
@@ -1063,38 +1099,27 @@ async function downloadFileWithRetry(url, filename, saveAs = false, retries = 2)
     }
     throw lastError || new Error('Download failed');
 }
-function downloadFile(url, filename, saveAs) {
+function downloadFile(url, filename, saveAs, waitForCompletion) {
     return new Promise((resolve, reject) => {
-        let downloadIdForFilename = null;
-        const filenameListener = (item, suggest) => {
-            if ((downloadIdForFilename !== null && item.id !== downloadIdForFilename) ||
-                !isSameDownloadUrl(item.url, url)) {
-                return;
-            }
-            suggest({
-                filename,
-                conflictAction: 'uniquify',
-            });
-        };
-        chrome.downloads.onDeterminingFilename.addListener(filenameListener);
         chrome.downloads.download({
             url,
             filename,
+            conflictAction: 'uniquify',
             saveAs,
         }, (downloadId) => {
             if (chrome.runtime.lastError) {
-                chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
                 reject(new Error(chrome.runtime.lastError.message));
             }
             else if (downloadId === undefined) {
-                chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
                 reject(new Error('Download failed'));
             }
             else {
-                downloadIdForFilename = downloadId;
+                if (!waitForCompletion) {
+                    resolve();
+                    return;
+                }
                 let settled = false;
                 const cleanup = () => {
-                    chrome.downloads.onDeterminingFilename.removeListener(filenameListener);
                     chrome.downloads.onChanged.removeListener(listener);
                     clearTimeout(timeoutId);
                 };
@@ -1140,23 +1165,6 @@ function downloadFile(url, filename, saveAs) {
         });
     });
 }
-function isSameDownloadUrl(downloadUrl, requestedUrl) {
-    if (!downloadUrl)
-        return false;
-    if (downloadUrl === requestedUrl)
-        return true;
-    try {
-        const download = new URL(downloadUrl);
-        const requested = new URL(requestedUrl);
-        return download.origin === requested.origin
-            && download.pathname === requested.pathname
-            && download.searchParams.get('format') === requested.searchParams.get('format')
-            && download.searchParams.get('name') === requested.searchParams.get('name');
-    }
-    catch {
-        return false;
-    }
-}
 function notifyProgress(current, total) {
     // 全てのタブに進捗を通知（Content Scriptへ）
     chrome.tabs.query({}, (tabs) => {
@@ -1173,6 +1181,52 @@ function notifyProgress(current, total) {
 }
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function isPixivImageUrl(url) {
+    try {
+        return new URL(url).hostname === 'i.pximg.net';
+    }
+    catch {
+        return false;
+    }
+}
+async function fetchImageAsDataUrl(url, referrer) {
+    const response = await fetch(url, {
+        credentials: 'omit',
+        cache: 'no-store',
+        referrer,
+        referrerPolicy: 'strict-origin-when-cross-origin',
+    });
+    if (!response.ok) {
+        throw new Error(`pixiv image fetch failed: ${response.status}`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    const data = await response.arrayBuffer();
+    if (!isValidImageResponse(contentType, data)) {
+        throw new Error(`pixiv image fetch returned non-image content: ${contentType || 'unknown'}`);
+    }
+    return arrayBufferToDataUrl(data, contentType || 'image/jpeg');
+}
+function arrayBufferToDataUrl(buffer, mimeType) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+    return `data:${mimeType};base64,${btoa(binary)}`;
+}
+function isValidImageResponse(contentType, buffer) {
+    if (contentType.toLowerCase().startsWith('image/'))
+        return true;
+    const bytes = new Uint8Array(buffer.slice(0, 12));
+    const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+    const isWebp = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+        bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+    return isJpeg || isPng || isGif || isWebp;
 }
 async function getSettings() {
     return new Promise((resolve) => {

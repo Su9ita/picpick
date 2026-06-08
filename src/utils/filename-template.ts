@@ -1,5 +1,12 @@
 import { ImageInfo } from '../types/image-info';
 
+// チェックボックス状態に応じてテンプレートに {date}_ を付与する
+export function applyDateToTemplate(template: string, includeDateInFilename: boolean): string {
+  if (!includeDateInFilename) return template;
+  if (template.startsWith('{date}')) return template;
+  return `{date}_${template}`;
+}
+
 // ベースプレフィックスから次の連番を取得（ダウンロード履歴を検索）
 export async function findNextIndex(
   basePrefix: string,

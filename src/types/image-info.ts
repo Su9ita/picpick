@@ -5,6 +5,10 @@ export interface ImageInfo {
   height: number | null;
   index: number;
   metadata: ImageMetadata;
+  // content script でプリフェッチした生データ (Referer が必要なサイト用)
+  blobData?: ArrayBuffer;
+  blobMimeType?: string;
+  downloadReferrer?: string;
 }
 
 export interface ImageMetadata {
