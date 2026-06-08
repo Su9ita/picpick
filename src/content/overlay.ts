@@ -12,8 +12,10 @@ let isDownloading = false;
 let scannedImages: ImageInfo[] = [];
 let currentSettings: Settings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
+let overlayGhosted = false;
 
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
+const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
 
 function getRuleIdForCurrentPage(url: string): string {
   const site = detectSite(url);
@@ -70,6 +72,13 @@ function createOverlay(): void {
         transition: all 0.2s ease;
         touch-action: none;
         user-select: none;
+      }
+      #picpick-btn.picpick-ghosted {
+        opacity: 0.14;
+        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.18);
+      }
+      #picpick-btn.picpick-ghosted:hover {
+        opacity: 0.24;
       }
       #picpick-btn.picpick-dragging {
         cursor: grabbing;
@@ -147,8 +156,10 @@ function createOverlay(): void {
         background: white;
         border-radius: 12px;
         padding: 24px;
-        width: 320px;
+        width: 460px;
         max-width: 90vw;
+        max-height: min(760px, calc(100vh - 40px));
+        overflow-y: auto;
         box-shadow: 0 8px 32px rgba(0,0,0,0.2);
       }
       .picpick-dialog-title {
@@ -286,6 +297,57 @@ function createOverlay(): void {
       .picpick-naming-section {
         margin-bottom: 16px;
       }
+      .picpick-rule-tabs {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .picpick-rule-tab {
+        height: 38px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #4b5563;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease;
+      }
+      .picpick-rule-tab:hover {
+        border-color: #a5b4fc;
+        background: #f8fafc;
+      }
+      .picpick-rule-tab.active {
+        border-color: #6366f1;
+        color: #4f46e5;
+        background: #eef2ff;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+      }
+      .picpick-rule-tab svg {
+        width: 22px;
+        height: 22px;
+        fill: currentColor;
+      }
+      .picpick-rule-tab .picpick-icon-stroke {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .picpick-visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
       .picpick-mode-toggle {
         display: flex;
         gap: 16px;
@@ -333,26 +395,32 @@ function createOverlay(): void {
         border-color: #6366f1;
       }
       .picpick-preview {
-        font-size: 11px;
+        font-size: 12px;
         color: #6b7280;
-        margin-top: 4px;
+        margin-top: 8px;
+        padding: 8px;
+        background: #f9fafb;
+        border-radius: 6px;
+        overflow-wrap: anywhere;
       }
       .picpick-preview span {
         color: #6366f1;
         font-family: monospace;
       }
       .picpick-include-date-row {
-        margin-bottom: 8px;
+        margin: 14px 0 16px;
+        padding: 10px 0;
       }
       .picpick-include-date-label {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
         font-size: 13px;
         color: #374151;
         cursor: pointer;
       }
       .picpick-include-date-label input[type="checkbox"] {
+        flex: 0 0 auto;
         width: auto;
         margin: 0;
         cursor: pointer;
@@ -378,12 +446,19 @@ function createOverlay(): void {
         </div>
         <div id="picpick-image-list" class="picpick-image-list" style="display: none;"></div>
 
-        <!-- サイトルール選択 (第1選択) -->
-        <div style="margin-bottom: 12px;">
-          <label style="display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 4px;">サイトルール</label>
-          <select id="picpick-rule-select" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;">
-            <option value="">-- 選択 --</option>
+        <!-- サイトルール選択 -->
+        <div style="margin-bottom: 10px;">
+          <div id="picpick-rule-tabs" class="picpick-rule-tabs" role="tablist" aria-label="サイトルール"></div>
+          <select id="picpick-rule-select" class="picpick-visually-hidden" aria-hidden="true" tabindex="-1">
+            <option value="generic"></option>
           </select>
+        </div>
+
+        <div class="picpick-include-date-row">
+          <label class="picpick-include-date-label">
+            <input type="checkbox" id="picpick-include-date">
+            <span>日付をいれる</span>
+          </label>
         </div>
 
         <!-- 保存名プリセット -->
@@ -396,9 +471,9 @@ function createOverlay(): void {
             <div class="picpick-custom-name-row">
               <input type="text" id="picpick-custom-name" placeholder="ファイル名を入力" class="picpick-custom-input">
             </div>
-            <div class="picpick-preview">
-              出力: <span id="picpick-filename-preview">2026-04-08_name_01.jpg</span>
-            </div>
+          </div>
+          <div class="picpick-preview">
+            保存結果: <span id="picpick-filename-preview">2026-04-08_name_01.jpg</span>
           </div>
         </div>
         <select id="picpick-preset-select" class="picpick-preset-select">
@@ -409,12 +484,6 @@ function createOverlay(): void {
             <label>最小横幅 (px)</label>
             <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
-        </div>
-        <div class="picpick-include-date-row">
-          <label class="picpick-include-date-label">
-            <input type="checkbox" id="picpick-include-date">
-            <span>ファイル名に日付 (YYYY-MM-DD) を含める</span>
-          </label>
         </div>
         <div class="picpick-save-destination">
           <label>保存先</label>
@@ -439,6 +508,17 @@ function createOverlay(): void {
   const btn = document.getElementById('picpick-btn');
   if (btn) {
     setupDraggableOverlay(btn);
+    btn.addEventListener('mousedown', (event) => {
+      if (event.button === 1) {
+        event.preventDefault();
+      }
+    });
+    btn.addEventListener('auxclick', (event) => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleOverlayGhosted();
+    });
     btn.addEventListener('click', (event) => {
       if (suppressNextOverlayClick) {
         event.preventDefault();
@@ -500,7 +580,10 @@ function createOverlay(): void {
   });
 
   // カスタム名入力
-  customNameInput?.addEventListener('input', updateOverlayFilenamePreview);
+  customNameInput?.addEventListener('input', () => {
+    updateFilenamePresetDropdown(false);
+    updateOverlayFilenamePreview();
+  });
 
   saveDestinationSelect?.addEventListener('change', async () => {
     currentSettings.selectedDownloadFolderPresetId = saveDestinationSelect.value;
@@ -509,6 +592,7 @@ function createOverlay(): void {
   const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
   includeDateCheckbox?.addEventListener('change', () => {
     currentSettings.includeDateInFilename = includeDateCheckbox.checked;
+    updateFilenamePresetDropdown(false);
     updateOverlayFilenamePreview();
   });
 
@@ -646,6 +730,14 @@ function setupDraggableOverlay(btn: HTMLElement): void {
   });
 }
 
+function toggleOverlayGhosted(): void {
+  const btn = document.getElementById('picpick-btn');
+  if (!btn) return;
+
+  overlayGhosted = !overlayGhosted;
+  btn.classList.toggle('picpick-ghosted', overlayGhosted);
+}
+
 function clampOverlayPosition(left: number, top: number): { left: number; top: number } {
   const margin = 8;
   const overlayWidth = overlayContainer?.offsetWidth || 44;
@@ -732,7 +824,7 @@ function showConfirmDialog(): void {
 
   if (!dialog || !countEl || !presetSelect || !minWidthInput) return;
 
-  // 【新規】サイトルール選択肢を初期化
+  // サイトルール選択肢を初期化
   if (ruleSelect) {
     ruleSelect.innerHTML = '';
     if (currentSettings.siteRules) {
@@ -745,15 +837,8 @@ function showConfirmDialog(): void {
     }
     // 前回選んだルールをデフォルト値として設定
     ruleSelect.value = currentSettings.activeRuleId || 'generic';
-
-    // ルール選択時のイベントリスナー
-    ruleSelect.addEventListener('change', () => {
-      const selectedRuleId = ruleSelect.value;
-      if (selectedRuleId) {
-        switchRule(selectedRuleId);
-      }
-    });
   }
+  renderRuleTabs();
 
   // プリセット選択肢を更新（ルール別プリセット含む）
   updatePresetDropdown();
@@ -772,9 +857,62 @@ function showConfirmDialog(): void {
 
   updateFilteredCount();
   initOverlayNamingMode();
-  updateFilenamePresetDropdown();
   updateSaveDestinationDropdown();
   dialog.classList.add('show');
+}
+
+function renderRuleTabs(): void {
+  const tabs = document.getElementById('picpick-rule-tabs');
+  const ruleSelect = document.getElementById('picpick-rule-select') as HTMLSelectElement;
+  if (!tabs) return;
+
+  const rules = currentSettings.siteRules || [];
+  const orderedRules = [
+    ...RULE_TAB_ORDER
+      .map((ruleId) => rules.find((rule) => rule.siteId === ruleId))
+      .filter((rule): rule is NonNullable<typeof rule> => Boolean(rule)),
+    ...rules.filter((rule) => !RULE_TAB_ORDER.includes(rule.siteId)),
+  ];
+
+  tabs.innerHTML = '';
+  for (const rule of orderedRules) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'picpick-rule-tab';
+    button.dataset.ruleId = rule.siteId;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-label', rule.label);
+    button.innerHTML = getRuleIconSvg(rule.siteId);
+    button.addEventListener('click', () => {
+      if (ruleSelect) ruleSelect.value = rule.siteId;
+      switchRule(rule.siteId);
+    });
+    tabs.appendChild(button);
+  }
+
+  updateRuleTabsActive();
+}
+
+function updateRuleTabsActive(): void {
+  const activeRuleId = currentSettings.activeRuleId || 'generic';
+  document.querySelectorAll<HTMLButtonElement>('.picpick-rule-tab').forEach((tab) => {
+    const isActive = tab.dataset.ruleId === activeRuleId;
+    tab.classList.toggle('active', isActive);
+    tab.setAttribute('aria-selected', String(isActive));
+  });
+}
+
+function getRuleIconSvg(ruleId: string): string {
+  if (ruleId === 'x') {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h4.7l4.8 6.5L18.1 3H21l-7.1 8.2L21.4 21h-4.7l-5.1-6.9L5.7 21H2.8l7.4-8.6L3 3zm3.1 1.8 11.5 14.4h1.7L7.8 4.8H6.1z"/></svg>`;
+  }
+  if (ruleId === 'patreon') {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h4v18H4V3zm8 0h2.7a5.7 5.7 0 1 1 0 11.4H12V3z"/></svg>`;
+  }
+  if (ruleId === 'pixiv_fanbox') {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5V4zm3 3v10h2.2v-3.6h3.6v-2H10.2V9.1h5.2V7H8z"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path class="picpick-icon-stroke" d="M12 3v18M3 12h18M5.6 5.6c3.5 2 9.3 2 12.8 0M5.6 18.4c3.5-2 9.3-2 12.8 0"/><circle class="picpick-icon-stroke" cx="12" cy="12" r="9"/></svg>`;
 }
 
 // プリセットドロップダウンを更新（ルール別プリセット含む）
@@ -835,6 +973,9 @@ function switchRule(ruleId: string): void {
 
   // 新しいルールに切り替え
   currentSettings.activeRuleId = ruleId;
+  const ruleSelect = document.getElementById('picpick-rule-select') as HTMLSelectElement;
+  if (ruleSelect) ruleSelect.value = ruleId;
+  updateRuleTabsActive();
 
   // プリセットドロップダウンを更新
   updatePresetDropdown();
@@ -854,6 +995,10 @@ function switchRule(ruleId: string): void {
     updateFilteredCount();
     initOverlayNamingMode();
   }
+
+  updateFilteredCount();
+  updateCustomNameVisibility();
+  updateOverlayFilenamePreview();
 }
 
 // 確認ダイアログを非表示
@@ -937,24 +1082,46 @@ function createPreviewImageInfo(): ImageInfo {
   };
 }
 
-function updateFilenamePresetDropdown(): void {
+function updateFilenamePresetDropdown(resetToSaved: boolean = true): void {
   const select = document.getElementById('picpick-filename-preset-select') as HTMLSelectElement;
   if (!select) return;
 
   const ruleId = currentSettings.activeRuleId || 'generic';
   const presets = getRuleFilenamePresets(currentSettings, ruleId);
-  const selectedId = currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id || '';
+  const selectedId = resetToSaved
+    ? currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id || ''
+    : select.value || currentSettings.ruleSessionSettings?.[ruleId]?.selectedFilenamePresetId || presets[0]?.id || '';
 
   select.innerHTML = '';
   presets.forEach(preset => {
     const option = document.createElement('option');
     option.value = preset.id;
-    option.textContent = `${preset.label} - ${preset.template}`;
+    option.textContent = `${getFilenamePresetDisplayLabel(preset.label, preset.template)}: ${getFilenamePresetPreview(preset.template)}`;
     select.appendChild(option);
   });
 
   select.value = selectedId;
+  if (!select.value && presets[0]) {
+    select.value = presets[0].id;
+  }
   updateCustomNameVisibility();
+}
+
+function getFilenamePresetDisplayLabel(label: string, template: string): string {
+  if (template.includes('{custom}')) {
+    return label.includes('連番') ? 'カスタム + 連番' : 'カスタム';
+  }
+  return label.replace(/\s*標準$/, ' 標準');
+}
+
+function getFilenamePresetPreview(template: string): string {
+  const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
+  const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
+  const includeDate = includeDateCheckbox ? includeDateCheckbox.checked : (currentSettings.includeDateInFilename !== false);
+  const resolvedTemplate = applyDateToTemplate(template, includeDate);
+  const previewImage = scannedImages[0] || createPreviewImageInfo();
+  const customName = customNameInput?.value.trim() || 'name';
+  return generateFilename(resolvedTemplate, previewImage, 1, customName);
 }
 
 function updateSaveDestinationDropdown(): void {
