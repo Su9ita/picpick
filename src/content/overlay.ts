@@ -1261,7 +1261,12 @@ async function handleConfirmDownload(): Promise<void> {
 
     // pixiv CDN 画像はコンテンツスクリプト経由でプリフェッチ
     // (service worker から直接 fetch しても Referer が設定されないため)
-    const imagesToDownload = await prefetchPixivImages(filteredImages, (current, total) => {
+    let imagesToDownload = await prefetchPixivImages(filteredImages, (current, total) => {
+      statusText.textContent = `画像を取得中... ${current}/${total}`;
+    });
+
+    // FANBOX 画像も同様にプリフェッチ（Referer + Cookie が必要）
+    imagesToDownload = await prefetchFanboxImages(imagesToDownload, (current, total) => {
       statusText.textContent = `画像を取得中... ${current}/${total}`;
     });
 
@@ -1461,6 +1466,54 @@ async function prefetchPixivImages(
   }
 
   return result;
+}
+
+// FANBOX 原寸画像（downloads.fanbox.cc）をコンテンツスクリプト経由でプリフェッチする。
+// コンテンツスクリプトは fanbox.cc 上で動作するため、Referer と Cookie が正しく付与される。
+async function prefetchFanboxImages(
+  images: ImageInfo[],
+  onProgress?: (current: number, total: number) => void
+): Promise<ImageInfo[]> {
+  const fanboxIndices = images
+    .map((_img, i) => i)
+    .filter((i) => !images[i].blobData && isFanboxDownloadUrl(images[i].url));
+
+  if (fanboxIndices.length === 0) return images;
+
+  const result = [...images];
+  let fetched = 0;
+
+  for (const i of fanboxIndices) {
+    try {
+      const response = await fetch(images[i].url, {
+        credentials: 'include',
+        cache: 'no-store',
+        referrer: 'https://www.fanbox.cc/',
+        referrerPolicy: 'strict-origin-when-cross-origin',
+      });
+      if (response.ok) {
+        const blobData = await response.arrayBuffer();
+        const blobMimeType = response.headers.get('content-type') || 'image/jpeg';
+        if (isValidImageResponse(blobMimeType, blobData)) {
+          result[i] = { ...images[i], blobData, blobMimeType, downloadReferrer: 'https://www.fanbox.cc/' };
+        }
+      }
+    } catch {
+      // service worker 側のダウンロードにフォールバック
+    }
+    fetched++;
+    onProgress?.(fetched, fanboxIndices.length);
+  }
+
+  return result;
+}
+
+function isFanboxDownloadUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname === 'downloads.fanbox.cc';
+  } catch {
+    return false;
+  }
 }
 
 function isValidImageResponse(contentType: string, buffer: ArrayBuffer): boolean {

@@ -1288,7 +1288,224 @@ class PixivExtractor extends BaseExtractor {
     }
 }
 
+;// ./src/extractors/fanbox-extractor.ts
+
+/**
+ * Pixiv FANBOX 専用 extractor
+ *
+ * FANBOX は SPA のため、記事間をクリック移動しても og:title や
+ * meta タグが古い別記事のまま残り、汎用 extractor では誤ったタイトルを
+ * 拾ってしまう。そのため必ず公式 API
+ *   https://api.fanbox.cc/post.info?postId={id}
+ * からメタデータ（タイトル・クリエイター名・投稿日）を取得する。
+ *
+ * 画像も API の imageMap / images から originalUrl（原寸）を取得する。
+ * API が画像を返さない場合のみ DOM 抽出にフォールバックする。
+ */
+const FANBOX_REFERRER = 'https://www.fanbox.cc/';
+class FanboxExtractor extends BaseExtractor {
+    constructor() {
+        super({
+            urlPatterns: [
+                // creator.fanbox.cc/posts/123
+                /^https:\/\/[\w-]+\.fanbox\.cc\/posts\/\d+/,
+                // www.fanbox.cc/@creator/posts/123
+                /^https:\/\/www\.fanbox\.cc\/@[\w-]+\/posts\/\d+/,
+            ],
+            selectors: {
+                images: 'img',
+            },
+        });
+        this.cachedMetadata = null;
+    }
+    async extractImages() {
+        const postId = this.extractPostId();
+        const data = await this.fetchPostInfo(postId);
+        const metadata = data ? this.buildMetadata(data, postId) : this.extractMetadata();
+        this.cachedMetadata = metadata;
+        // API から画像を取得（原寸）。
+        // width/height も API 値を引き継ぐ（サイズフィルターで弾かれないように）。
+        const apiImages = data ? this.collectApiImages(data) : [];
+        if (apiImages.length > 0) {
+            return apiImages.map((item, index) => {
+                const url = item.originalUrl || item.thumbnailUrl || '';
+                return {
+                    url,
+                    originalUrl: url,
+                    width: item.width ?? null,
+                    height: item.height ?? null,
+                    index: index + 1,
+                    downloadReferrer: FANBOX_REFERRER,
+                    metadata: {
+                        ...metadata,
+                        originalFilename: this.extractFilenameFromUrl(url),
+                    },
+                };
+            });
+        }
+        // フォールバック: DOM から FANBOX 画像を抽出（メタデータは API のものを使用）
+        return this.extractImagesFromDom(metadata);
+    }
+    extractMetadata() {
+        if (this.cachedMetadata)
+            return this.cachedMetadata;
+        // API 取得前の同期フォールバック。
+        // og:title は SPA で古くなるため使わず、DOM の h1 / 投稿日要素から取得する。
+        const postId = this.extractPostId();
+        const h1 = document.querySelector('h1')?.textContent?.trim();
+        const title = h1 || document.title || 'untitled';
+        const creator = this.extractCreatorIdFromUrl();
+        const timeEl = document.querySelector('time[datetime]');
+        const dateStr = timeEl?.getAttribute('datetime') || '';
+        return {
+            creator: this.sanitizeTitle(creator),
+            postId,
+            postTitle: this.sanitizeTitle(title),
+            postDate: dateStr ? this.parseDate(dateStr) : new Date(),
+            originalFilename: '',
+        };
+    }
+    async fetchPostInfo(postId) {
+        if (!postId || postId === 'unknown')
+            return null;
+        try {
+            // api.fanbox.cc は *.fanbox.cc オリジンからの credentialed リクエストを許可。
+            // content script は fanbox.cc 上で動作するため Origin が自動付与される。
+            const response = await fetch(`https://api.fanbox.cc/post.info?postId=${encodeURIComponent(postId)}`, {
+                credentials: 'include',
+                cache: 'no-store',
+            });
+            if (!response.ok)
+                return null;
+            const json = (await response.json());
+            if (json.error || !json.body)
+                return null;
+            return json;
+        }
+        catch {
+            return null;
+        }
+    }
+    buildMetadata(data, fallbackId) {
+        const body = data.body;
+        const dateStr = body.publishedDatetime || body.updatedDatetime || '';
+        return {
+            // ファイル名のクリエイターは表示名（例: 黒木雄心）。無ければ creatorId。
+            creator: this.sanitizeTitle(body.user?.name || body.creatorId || ''),
+            postId: body.id || fallbackId,
+            postTitle: this.sanitizeTitle(body.title || 'untitled'),
+            postDate: dateStr ? this.parseDate(dateStr) : new Date(),
+            originalFilename: '',
+        };
+    }
+    /**
+     * API レスポンスから原寸画像アイテム（URL + width/height）を表示順に収集する。
+     * - article 形式: body.blocks の順に imageMap を解決
+     * - image 形式:   body.images の配列順
+     */
+    collectApiImages(data) {
+        const postBody = data.body?.body;
+        if (!postBody)
+            return [];
+        const items = [];
+        const seen = new Set();
+        const pushItem = (item) => {
+            const url = item?.originalUrl || item?.thumbnailUrl;
+            if (item && url && !seen.has(url)) {
+                seen.add(url);
+                items.push(item);
+            }
+        };
+        // article 形式: blocks の順序を尊重
+        if (Array.isArray(postBody.blocks) && postBody.imageMap) {
+            for (const block of postBody.blocks) {
+                if (block.type === 'image' && block.imageId) {
+                    pushItem(postBody.imageMap[block.imageId]);
+                }
+            }
+        }
+        // image 形式
+        if (items.length === 0 && Array.isArray(postBody.images)) {
+            for (const img of postBody.images) {
+                pushItem(img);
+            }
+        }
+        // 取りこぼし対策: imageMap 全件
+        if (items.length === 0 && postBody.imageMap) {
+            for (const img of Object.values(postBody.imageMap)) {
+                pushItem(img);
+            }
+        }
+        return items;
+    }
+    /**
+     * フォールバック: DOM 上の FANBOX 画像（downloads.fanbox.cc / pximg）を抽出。
+     * API が使えない場合でも従来どおり保存できるようにする。
+     */
+    extractImagesFromDom(metadata) {
+        const images = [];
+        const seen = new Set();
+        const imgs = document.querySelectorAll('img');
+        for (const img of imgs) {
+            const url = img.currentSrc || img.src;
+            if (!url || seen.has(url))
+                continue;
+            if (!this.isFanboxContentImage(url))
+                continue;
+            seen.add(url);
+            images.push({
+                url,
+                originalUrl: url,
+                width: img.naturalWidth || null,
+                height: img.naturalHeight || null,
+                index: images.length + 1,
+                downloadReferrer: FANBOX_REFERRER,
+                metadata: {
+                    ...metadata,
+                    originalFilename: this.extractFilenameFromUrl(url),
+                },
+            });
+        }
+        return images;
+    }
+    isFanboxContentImage(url) {
+        try {
+            const host = new URL(url).hostname;
+            // 投稿本文画像のCDN。アイコン等の小さい画像は除外しきれないが
+            // フォールバック用途なので許容する。
+            return (host === 'downloads.fanbox.cc' ||
+                host.endsWith('.pximg.net') ||
+                host.endsWith('.fanbox.cc'));
+        }
+        catch {
+            return false;
+        }
+    }
+    extractPostId() {
+        const match = window.location.pathname.match(/\/posts\/(\d+)/);
+        return match?.[1] || 'unknown';
+    }
+    extractCreatorIdFromUrl() {
+        // www.fanbox.cc/@creator/posts/...
+        const atMatch = window.location.pathname.match(/\/@([\w-]+)/);
+        if (atMatch)
+            return atMatch[1];
+        // creator.fanbox.cc
+        const host = window.location.hostname;
+        const sub = host.replace(/\.fanbox\.cc$/, '');
+        return sub && sub !== 'www' ? sub : '';
+    }
+    sanitizeTitle(title) {
+        return title
+            .replace(/[<>:"/\\|?*]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 100);
+    }
+}
+
 ;// ./src/extractors/index.ts
+
 
 
 
@@ -1297,9 +1514,8 @@ class PixivExtractor extends BaseExtractor {
 const siteExtractors = [
     new PatreonExtractor(),
     new PixivExtractor(),
+    new FanboxExtractor(),
     new XExtractor(),
-    // 将来追加:
-    // new FanboxExtractor(),
 ];
 // 汎用extractor（フォールバック）
 const genericExtractor = new GenericExtractor();
@@ -3112,7 +3328,11 @@ async function handleConfirmDownload() {
         statusText.textContent = `${filteredImages.length}枚をダウンロード中...`;
         // pixiv CDN 画像はコンテンツスクリプト経由でプリフェッチ
         // (service worker から直接 fetch しても Referer が設定されないため)
-        const imagesToDownload = await prefetchPixivImages(filteredImages, (current, total) => {
+        let imagesToDownload = await prefetchPixivImages(filteredImages, (current, total) => {
+            statusText.textContent = `画像を取得中... ${current}/${total}`;
+        });
+        // FANBOX 画像も同様にプリフェッチ（Referer + Cookie が必要）
+        imagesToDownload = await prefetchFanboxImages(imagesToDownload, (current, total) => {
             statusText.textContent = `画像を取得中... ${current}/${total}`;
         });
         // ダウンロード実行
@@ -3302,6 +3522,48 @@ async function prefetchPixivImages(images, onProgress) {
         onProgress?.(fetched, pixivIndices.length);
     }
     return result;
+}
+// FANBOX 原寸画像（downloads.fanbox.cc）をコンテンツスクリプト経由でプリフェッチする。
+// コンテンツスクリプトは fanbox.cc 上で動作するため、Referer と Cookie が正しく付与される。
+async function prefetchFanboxImages(images, onProgress) {
+    const fanboxIndices = images
+        .map((_img, i) => i)
+        .filter((i) => !images[i].blobData && isFanboxDownloadUrl(images[i].url));
+    if (fanboxIndices.length === 0)
+        return images;
+    const result = [...images];
+    let fetched = 0;
+    for (const i of fanboxIndices) {
+        try {
+            const response = await fetch(images[i].url, {
+                credentials: 'include',
+                cache: 'no-store',
+                referrer: 'https://www.fanbox.cc/',
+                referrerPolicy: 'strict-origin-when-cross-origin',
+            });
+            if (response.ok) {
+                const blobData = await response.arrayBuffer();
+                const blobMimeType = response.headers.get('content-type') || 'image/jpeg';
+                if (isValidImageResponse(blobMimeType, blobData)) {
+                    result[i] = { ...images[i], blobData, blobMimeType, downloadReferrer: 'https://www.fanbox.cc/' };
+                }
+            }
+        }
+        catch {
+            // service worker 側のダウンロードにフォールバック
+        }
+        fetched++;
+        onProgress?.(fetched, fanboxIndices.length);
+    }
+    return result;
+}
+function isFanboxDownloadUrl(url) {
+    try {
+        return new URL(url).hostname === 'downloads.fanbox.cc';
+    }
+    catch {
+        return false;
+    }
 }
 function isValidImageResponse(contentType, buffer) {
     if (contentType.toLowerCase().startsWith('image/'))

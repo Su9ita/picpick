@@ -3,14 +3,14 @@ import { PatreonExtractor } from './patreon-extractor';
 import { XExtractor } from './x-extractor';
 import { GenericExtractor } from './generic-extractor';
 import { PixivExtractor } from './pixiv-extractor';
+import { FanboxExtractor } from './fanbox-extractor';
 
 // サイト専用のextractorを優先順に登録
 const siteExtractors: BaseExtractor[] = [
   new PatreonExtractor(),
   new PixivExtractor(),
+  new FanboxExtractor(),
   new XExtractor(),
-  // 将来追加:
-  // new FanboxExtractor(),
 ];
 
 // 汎用extractor（フォールバック）
