@@ -186,8 +186,22 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
     downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
     selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
     includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
+    advancedImageFiltersEnabled: saved.advancedImageFiltersEnabled !== undefined ? saved.advancedImageFiltersEnabled : DEFAULT_SETTINGS.advancedImageFiltersEnabled,
+    aspectRatioFilterEnabled: saved.aspectRatioFilterEnabled !== undefined ? saved.aspectRatioFilterEnabled : DEFAULT_SETTINGS.aspectRatioFilterEnabled,
+    minAspectRatio: normalizeNumber(saved.minAspectRatio, DEFAULT_SETTINGS.minAspectRatio, 0.05, 20),
+    maxAspectRatio: normalizeNumber(saved.maxAspectRatio, DEFAULT_SETTINGS.maxAspectRatio, 0.05, 20),
+    keywordFilterEnabled: saved.keywordFilterEnabled !== undefined ? saved.keywordFilterEnabled : DEFAULT_SETTINGS.keywordFilterEnabled,
+    positionHeuristicFilterEnabled: saved.positionHeuristicFilterEnabled !== undefined ? saved.positionHeuristicFilterEnabled : DEFAULT_SETTINGS.positionHeuristicFilterEnabled,
+    pHashDuplicateFilterEnabled: saved.pHashDuplicateFilterEnabled !== undefined ? saved.pHashDuplicateFilterEnabled : DEFAULT_SETTINGS.pHashDuplicateFilterEnabled,
+    pHashDistanceThreshold: Math.round(normalizeNumber(saved.pHashDistanceThreshold, DEFAULT_SETTINGS.pHashDistanceThreshold, 0, 32)),
     ruleFilenamePresets,
   };
+
+  if (settings.minAspectRatio > settings.maxAspectRatio) {
+    const min = settings.maxAspectRatio;
+    settings.maxAspectRatio = settings.minAspectRatio;
+    settings.minAspectRatio = min;
+  }
 
   const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
   if (settings.selectedPreset && !presetNames.has(settings.selectedPreset)) {
@@ -216,6 +230,12 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
   }
 
   return settings;
+}
+
+function normalizeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
 }
 
 export function getSelectedDownloadFolder(settings: Settings): string {

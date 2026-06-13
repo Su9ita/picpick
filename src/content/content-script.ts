@@ -5,16 +5,22 @@ import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
 import { initOverlay } from './overlay';
 import { initXInlineSave } from './x-inline-save';
+import { initCreatorBatch } from './creator-batch';
 
-// ページ読み込み完了後にオーバーレイを初期化
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    initOverlay();
-    initXInlineSave();
-  });
-} else {
+function initContentFeatures(): void {
   initOverlay();
   initXInlineSave();
+  // FANBOX ではクリエイター一括保存UIも有効化
+  if (window.location.hostname.endsWith('fanbox.cc')) {
+    initCreatorBatch();
+  }
+}
+
+// ページ読み込み完了後に初期化
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initContentFeatures);
+} else {
+  initContentFeatures();
 }
 
 // メッセージリスナー（ポップアップからの呼び出し用）

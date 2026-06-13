@@ -42,6 +42,14 @@ export interface Settings {
   skipDuplicates: boolean;
   overlayEnabled: boolean;  // オーバーレイの表示/非表示
   includeDateInFilename: boolean;  // ファイル名に日付を含めるか
+  advancedImageFiltersEnabled: boolean;  // ルールベースの追加除外を使う
+  aspectRatioFilterEnabled: boolean;  // 極端な縦横比を除外する
+  minAspectRatio: number;  // width / height の下限
+  maxAspectRatio: number;  // width / height の上限
+  keywordFilterEnabled: boolean;  // sample/thanks などのファイル名・タイトル除外
+  positionHeuristicFilterEnabled: boolean;  // 投稿先頭/末尾のカード系画像を除外
+  pHashDuplicateFilterEnabled: boolean;  // 近似重複を除外する
+  pHashDistanceThreshold: number;  // pHash のハミング距離しきい値
   creatorList: string[];      // 登録済みクリエイター名リスト
   lastSelectedCreator: string; // 前回選択したクリエイター名
 
@@ -147,6 +155,14 @@ export const DEFAULT_SETTINGS: Settings = {
   skipDuplicates: true,
   overlayEnabled: true,  // デフォルトでオーバーレイを表示
   includeDateInFilename: true,  // デフォルトで日付を含める
+  advancedImageFiltersEnabled: true,
+  aspectRatioFilterEnabled: true,
+  minAspectRatio: 0.35,
+  maxAspectRatio: 3.2,
+  keywordFilterEnabled: true,
+  positionHeuristicFilterEnabled: true,
+  pHashDuplicateFilterEnabled: true,
+  pHashDistanceThreshold: 6,
   creatorList: [],
   lastSelectedCreator: '',
   sizePresets: DEFAULT_SIZE_PRESETS,

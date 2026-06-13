@@ -1403,21 +1403,150 @@ class PixivExtractor extends BaseExtractor {
     }
 }
 
+;// ./src/extractors/fanbox-api.ts
+/**
+ * FANBOX 公式 API (api.fanbox.cc) との通信・パースを担う共通モジュール。
+ *
+ * 単一投稿ページ用の FanboxExtractor と、クリエイター一括保存用の
+ * fanbox-crawler の両方が、ここの純関数を使って同一の ImageInfo を生成する。
+ * （ファイル名・重複判定キーを両経路で一致させるため、ロジックは一本化する）
+ */
+const FANBOX_REFERRER = 'https://www.fanbox.cc/';
+/**
+ * 投稿メタデータ＋画像を API から取得する。
+ * api.fanbox.cc は *.fanbox.cc オリジンからの credentialed リクエストを許可するため、
+ * content script（fanbox.cc 上で動作）からは Origin が自動付与される。
+ */
+async function fetchFanboxPostInfo(postId) {
+    if (!postId || postId === 'unknown')
+        return null;
+    try {
+        const response = await fetch(`https://api.fanbox.cc/post.info?postId=${encodeURIComponent(postId)}`, {
+            credentials: 'include',
+            cache: 'no-store',
+        });
+        if (!response.ok)
+            return null;
+        const json = (await response.json());
+        if (json.error || !json.body)
+            return null;
+        return json;
+    }
+    catch {
+        return null;
+    }
+}
+function sanitizeFanboxTitle(title) {
+    return title
+        .replace(/[<>:"/\\|?*]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 100);
+}
+function buildFanboxMetadata(data, fallbackId) {
+    const body = data.body;
+    const dateStr = body.publishedDatetime || body.updatedDatetime || '';
+    return {
+        // ファイル名のクリエイターは表示名（例: 黒木雄心）。無ければ creatorId。
+        creator: sanitizeFanboxTitle(body.user?.name || body.creatorId || ''),
+        postId: body.id || fallbackId,
+        postTitle: sanitizeFanboxTitle(body.title || 'untitled'),
+        postDate: dateStr ? new Date(dateStr) : new Date(),
+        originalFilename: '',
+    };
+}
+/**
+ * API レスポンスから原寸画像アイテム（URL + width/height + id）を表示順に収集する。
+ * - article 形式: body.blocks の順に imageMap を解決
+ * - image 形式:   body.images の配列順
+ */
+function collectFanboxApiImages(data) {
+    const postBody = data.body?.body;
+    if (!postBody)
+        return [];
+    const items = [];
+    const seen = new Set();
+    const pushItem = (item) => {
+        const url = item?.originalUrl || item?.thumbnailUrl;
+        if (item && url && !seen.has(url)) {
+            seen.add(url);
+            items.push(item);
+        }
+    };
+    // article 形式: blocks の順序を尊重
+    if (Array.isArray(postBody.blocks) && postBody.imageMap) {
+        for (const block of postBody.blocks) {
+            if (block.type === 'image' && block.imageId) {
+                pushItem(postBody.imageMap[block.imageId]);
+            }
+        }
+    }
+    // image 形式
+    if (items.length === 0 && Array.isArray(postBody.images)) {
+        for (const img of postBody.images) {
+            pushItem(img);
+        }
+    }
+    // 取りこぼし対策: imageMap 全件
+    if (items.length === 0 && postBody.imageMap) {
+        for (const img of Object.values(postBody.imageMap)) {
+            pushItem(img);
+        }
+    }
+    return items;
+}
+function fanboxFilenameFromUrl(url) {
+    try {
+        return new URL(url).pathname.split('/').pop() || 'image';
+    }
+    catch {
+        return 'image';
+    }
+}
+/**
+ * 重複判定に使う安定キー。FANBOX は画像ごとに id を持つのでそれを優先し、
+ * 無ければ URL のファイル名（拡張子除く）にフォールバックする。
+ */
+function fanboxImageId(item, url) {
+    if (item.id)
+        return item.id;
+    const name = fanboxFilenameFromUrl(url);
+    return name.replace(/\.[^.]+$/, '') || url;
+}
+function fanboxItemUrl(item) {
+    return item.originalUrl || item.thumbnailUrl || '';
+}
+/** FanboxImageItem 配列を、保存パイプラインが扱う ImageInfo 配列へ変換する。 */
+function fanboxItemsToImageInfo(items, metadata) {
+    return items.map((item, index) => {
+        const url = fanboxItemUrl(item);
+        return {
+            url,
+            originalUrl: url,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            index: index + 1,
+            downloadReferrer: FANBOX_REFERRER,
+            metadata: {
+                ...metadata,
+                originalFilename: fanboxFilenameFromUrl(url),
+            },
+        };
+    });
+}
+
 ;// ./src/extractors/fanbox-extractor.ts
 
+
 /**
- * Pixiv FANBOX 専用 extractor
+ * Pixiv FANBOX 専用 extractor（単一投稿ページ用）
  *
  * FANBOX は SPA のため、記事間をクリック移動しても og:title や
  * meta タグが古い別記事のまま残り、汎用 extractor では誤ったタイトルを
- * 拾ってしまう。そのため必ず公式 API
- *   https://api.fanbox.cc/post.info?postId={id}
- * からメタデータ（タイトル・クリエイター名・投稿日）を取得する。
- *
- * 画像も API の imageMap / images から originalUrl（原寸）を取得する。
- * API が画像を返さない場合のみ DOM 抽出にフォールバックする。
+ * 拾ってしまう。そのため必ず公式 API（api.fanbox.cc/post.info）から
+ * メタデータと原寸画像を取得する。API/パースの実体は fanbox-api に集約し、
+ * クリエイター一括保存（fanbox-crawler）と共有する。
  */
-const FANBOX_REFERRER = 'https://www.fanbox.cc/';
 class FanboxExtractor extends BaseExtractor {
     constructor() {
         super({
@@ -1435,28 +1564,13 @@ class FanboxExtractor extends BaseExtractor {
     }
     async extractImages() {
         const postId = this.extractPostId();
-        const data = await this.fetchPostInfo(postId);
-        const metadata = data ? this.buildMetadata(data, postId) : this.extractMetadata();
+        const data = await fetchFanboxPostInfo(postId);
+        const metadata = data ? buildFanboxMetadata(data, postId) : this.extractMetadata();
         this.cachedMetadata = metadata;
         // API から画像を取得（原寸）。
-        // width/height も API 値を引き継ぐ（サイズフィルターで弾かれないように）。
-        const apiImages = data ? this.collectApiImages(data) : [];
+        const apiImages = data ? collectFanboxApiImages(data) : [];
         if (apiImages.length > 0) {
-            return apiImages.map((item, index) => {
-                const url = item.originalUrl || item.thumbnailUrl || '';
-                return {
-                    url,
-                    originalUrl: url,
-                    width: item.width ?? null,
-                    height: item.height ?? null,
-                    index: index + 1,
-                    downloadReferrer: FANBOX_REFERRER,
-                    metadata: {
-                        ...metadata,
-                        originalFilename: this.extractFilenameFromUrl(url),
-                    },
-                };
-            });
+            return fanboxItemsToImageInfo(apiImages, metadata);
         }
         // フォールバック: DOM から FANBOX 画像を抽出（メタデータは API のものを使用）
         return this.extractImagesFromDom(metadata);
@@ -1473,85 +1587,12 @@ class FanboxExtractor extends BaseExtractor {
         const timeEl = document.querySelector('time[datetime]');
         const dateStr = timeEl?.getAttribute('datetime') || '';
         return {
-            creator: this.sanitizeTitle(creator),
+            creator: sanitizeFanboxTitle(creator),
             postId,
-            postTitle: this.sanitizeTitle(title),
+            postTitle: sanitizeFanboxTitle(title),
             postDate: dateStr ? this.parseDate(dateStr) : new Date(),
             originalFilename: '',
         };
-    }
-    async fetchPostInfo(postId) {
-        if (!postId || postId === 'unknown')
-            return null;
-        try {
-            // api.fanbox.cc は *.fanbox.cc オリジンからの credentialed リクエストを許可。
-            // content script は fanbox.cc 上で動作するため Origin が自動付与される。
-            const response = await fetch(`https://api.fanbox.cc/post.info?postId=${encodeURIComponent(postId)}`, {
-                credentials: 'include',
-                cache: 'no-store',
-            });
-            if (!response.ok)
-                return null;
-            const json = (await response.json());
-            if (json.error || !json.body)
-                return null;
-            return json;
-        }
-        catch {
-            return null;
-        }
-    }
-    buildMetadata(data, fallbackId) {
-        const body = data.body;
-        const dateStr = body.publishedDatetime || body.updatedDatetime || '';
-        return {
-            // ファイル名のクリエイターは表示名（例: 黒木雄心）。無ければ creatorId。
-            creator: this.sanitizeTitle(body.user?.name || body.creatorId || ''),
-            postId: body.id || fallbackId,
-            postTitle: this.sanitizeTitle(body.title || 'untitled'),
-            postDate: dateStr ? this.parseDate(dateStr) : new Date(),
-            originalFilename: '',
-        };
-    }
-    /**
-     * API レスポンスから原寸画像アイテム（URL + width/height）を表示順に収集する。
-     * - article 形式: body.blocks の順に imageMap を解決
-     * - image 形式:   body.images の配列順
-     */
-    collectApiImages(data) {
-        const postBody = data.body?.body;
-        if (!postBody)
-            return [];
-        const items = [];
-        const seen = new Set();
-        const pushItem = (item) => {
-            const url = item?.originalUrl || item?.thumbnailUrl;
-            if (item && url && !seen.has(url)) {
-                seen.add(url);
-                items.push(item);
-            }
-        };
-        // article 形式: blocks の順序を尊重
-        if (Array.isArray(postBody.blocks) && postBody.imageMap) {
-            for (const block of postBody.blocks) {
-                if (block.type === 'image' && block.imageId) {
-                    pushItem(postBody.imageMap[block.imageId]);
-                }
-            }
-        }
-        // image 形式
-        if (items.length === 0 && Array.isArray(postBody.images)) {
-            for (const img of postBody.images) {
-                pushItem(img);
-            }
-        }
-        // 取りこぼし対策: imageMap 全件
-        if (items.length === 0 && postBody.imageMap) {
-            for (const img of Object.values(postBody.imageMap)) {
-                pushItem(img);
-            }
-        }
-        return items;
     }
     /**
      * フォールバック: DOM 上の FANBOX 画像（downloads.fanbox.cc / pximg）を抽出。
@@ -1610,13 +1651,6 @@ class FanboxExtractor extends BaseExtractor {
         const sub = host.replace(/\.fanbox\.cc$/, '');
         return sub && sub !== 'www' ? sub : '';
     }
-    sanitizeTitle(title) {
-        return title
-            .replace(/[<>:"/\\|?*]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 100);
-    }
 }
 
 ;// ./src/extractors/index.ts
@@ -1674,6 +1708,37 @@ function filterImages(images, settings) {
     }
     return { passed, filtered, reasons };
 }
+async function filterNearDuplicateImages(images, settings) {
+    if (settings.advancedImageFiltersEnabled === false ||
+        settings.pHashDuplicateFilterEnabled === false ||
+        images.length < 2) {
+        return { passed: images, filtered: [], reasons: new Map() };
+    }
+    const threshold = Math.max(0, Math.min(32, Math.round(settings.pHashDistanceThreshold ?? 6)));
+    const passed = [];
+    const filtered = [];
+    const reasons = new Map();
+    const hashesByPost = new Map();
+    for (const image of images) {
+        const hash = await computeAverageHash(image);
+        if (hash == null) {
+            passed.push(image);
+            continue;
+        }
+        const postId = image.metadata.postId || '__unknown__';
+        const hashes = hashesByPost.get(postId) || [];
+        const isDuplicate = hashes.some((existing) => hammingDistance(hash, existing) <= threshold);
+        if (isDuplicate) {
+            filtered.push(image);
+            reasons.set(image.url, `近似重複（pHash距離 ${threshold} 以下）`);
+            continue;
+        }
+        hashes.push(hash);
+        hashesByPost.set(postId, hashes);
+        passed.push(image);
+    }
+    return { passed, filtered, reasons };
+}
 function checkImage(image, settings) {
     // サイズチェック
     if (settings.minWidth > 0) {
@@ -1691,6 +1756,22 @@ function checkImage(image, settings) {
             return { pass: false, reason: `拡張子 .${ext} は対象外` };
         }
     }
+    if (settings.advancedImageFiltersEnabled !== false) {
+        if (settings.aspectRatioFilterEnabled !== false && image.width && image.height) {
+            const ratio = image.width / image.height;
+            const min = settings.minAspectRatio ?? 0.35;
+            const max = settings.maxAspectRatio ?? 3.2;
+            if (ratio < min || ratio > max) {
+                return { pass: false, reason: `縦横比が対象外 (${ratio.toFixed(2)})` };
+            }
+        }
+        if (settings.keywordFilterEnabled !== false && hasExcludedKeyword(image)) {
+            return { pass: false, reason: 'sample/お礼/目次系のキーワード' };
+        }
+        if (settings.positionHeuristicFilterEnabled !== false && isLikelyEdgeCard(image)) {
+            return { pass: false, reason: '投稿の先頭/末尾にあるカード候補' };
+        }
+    }
     return { pass: true, reason: '' };
 }
 function extractExtension(url) {
@@ -1702,6 +1783,84 @@ function extractExtension(url) {
     catch {
         return '';
     }
+}
+function hasExcludedKeyword(image) {
+    const haystack = [
+        image.url,
+        image.originalUrl,
+        image.metadata.originalFilename,
+        image.metadata.postTitle,
+    ].join(' ').toLowerCase();
+    return [
+        'sample',
+        'preview',
+        'thumbnail',
+        'thumb',
+        'banner',
+        'header',
+        'cover',
+        'thanks',
+        'thank_you',
+        'thank-you',
+        'notice',
+        'readme',
+        'omake',
+        'mokuji',
+        '目次',
+        'サンプル',
+        'sample版',
+        'お礼',
+        '御礼',
+        '告知',
+        '案内',
+        '表紙',
+    ].some((keyword) => haystack.includes(keyword.toLowerCase()));
+}
+function isLikelyEdgeCard(image) {
+    const index = image.index || 0;
+    if (index > 2)
+        return false;
+    if (image.width && image.height) {
+        const ratio = image.width / image.height;
+        if (ratio > 1.8 || ratio < 0.45)
+            return true;
+    }
+    return hasExcludedKeyword(image);
+}
+async function computeAverageHash(image) {
+    if (!image.blobData)
+        return null;
+    try {
+        const blob = new Blob([image.blobData], { type: image.blobMimeType || 'image/jpeg' });
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement('canvas');
+        canvas.width = 8;
+        canvas.height = 8;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx)
+            return null;
+        ctx.drawImage(bitmap, 0, 0, 8, 8);
+        bitmap.close();
+        const data = ctx.getImageData(0, 0, 8, 8).data;
+        const values = [];
+        for (let i = 0; i < data.length; i += 4) {
+            values.push((data[i] * 0.299) + (data[i + 1] * 0.587) + (data[i + 2] * 0.114));
+        }
+        const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+        return values.reduce((hash, value, index) => (value >= average ? hash | (1n << BigInt(index)) : hash), 0n);
+    }
+    catch {
+        return null;
+    }
+}
+function hammingDistance(a, b) {
+    let value = a ^ b;
+    let distance = 0;
+    while (value > 0n) {
+        distance += Number(value & 1n);
+        value >>= 1n;
+    }
+    return distance;
 }
 
 ;// ./src/utils/auto-scroller.ts
@@ -1812,6 +1971,14 @@ const DEFAULT_SETTINGS = {
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
     includeDateInFilename: true, // デフォルトで日付を含める
+    advancedImageFiltersEnabled: true,
+    aspectRatioFilterEnabled: true,
+    minAspectRatio: 0.35,
+    maxAspectRatio: 3.2,
+    keywordFilterEnabled: true,
+    positionHeuristicFilterEnabled: true,
+    pHashDuplicateFilterEnabled: true,
+    pHashDistanceThreshold: 6,
     creatorList: [],
     lastSelectedCreator: '',
     sizePresets: DEFAULT_SIZE_PRESETS,
@@ -2027,8 +2194,21 @@ function normalizeSettings(input) {
         downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
         selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
         includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
+        advancedImageFiltersEnabled: saved.advancedImageFiltersEnabled !== undefined ? saved.advancedImageFiltersEnabled : DEFAULT_SETTINGS.advancedImageFiltersEnabled,
+        aspectRatioFilterEnabled: saved.aspectRatioFilterEnabled !== undefined ? saved.aspectRatioFilterEnabled : DEFAULT_SETTINGS.aspectRatioFilterEnabled,
+        minAspectRatio: normalizeNumber(saved.minAspectRatio, DEFAULT_SETTINGS.minAspectRatio, 0.05, 20),
+        maxAspectRatio: normalizeNumber(saved.maxAspectRatio, DEFAULT_SETTINGS.maxAspectRatio, 0.05, 20),
+        keywordFilterEnabled: saved.keywordFilterEnabled !== undefined ? saved.keywordFilterEnabled : DEFAULT_SETTINGS.keywordFilterEnabled,
+        positionHeuristicFilterEnabled: saved.positionHeuristicFilterEnabled !== undefined ? saved.positionHeuristicFilterEnabled : DEFAULT_SETTINGS.positionHeuristicFilterEnabled,
+        pHashDuplicateFilterEnabled: saved.pHashDuplicateFilterEnabled !== undefined ? saved.pHashDuplicateFilterEnabled : DEFAULT_SETTINGS.pHashDuplicateFilterEnabled,
+        pHashDistanceThreshold: Math.round(normalizeNumber(saved.pHashDistanceThreshold, DEFAULT_SETTINGS.pHashDistanceThreshold, 0, 32)),
         ruleFilenamePresets,
     };
+    if (settings.minAspectRatio > settings.maxAspectRatio) {
+        const min = settings.maxAspectRatio;
+        settings.maxAspectRatio = settings.minAspectRatio;
+        settings.minAspectRatio = min;
+    }
     const presetNames = new Set(settings.sizePresets.map((preset) => preset.name));
     if (settings.selectedPreset && !presetNames.has(settings.selectedPreset)) {
         settings.selectedPreset = DEFAULT_SETTINGS.selectedPreset;
@@ -2054,6 +2234,12 @@ function normalizeSettings(input) {
         settings.selectedDownloadFolderPresetId = DEFAULT_SETTINGS.selectedDownloadFolderPresetId;
     }
     return settings;
+}
+function normalizeNumber(value, fallback, min, max) {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n))
+        return fallback;
+    return Math.min(max, Math.max(min, n));
 }
 function getSelectedDownloadFolder(settings) {
     const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
@@ -2688,6 +2874,44 @@ function createOverlay() {
         margin: 0;
         cursor: pointer;
       }
+      .picpick-filter-section {
+        margin: 0 0 14px;
+        padding: 10px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+      }
+      .picpick-filter-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #374151;
+        cursor: pointer;
+      }
+      .picpick-filter-row input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+      }
+      .picpick-filter-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .picpick-filter-field label {
+        display: block;
+        font-size: 11px;
+        color: #6b7280;
+        margin-bottom: 3px;
+      }
+      .picpick-filter-field input {
+        width: 100%;
+        padding: 6px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        box-sizing: border-box;
+      }
     </style>
     <button id="picpick-btn" title="画像をスキャン / ドラッグで移動">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -2748,6 +2972,22 @@ function createOverlay() {
             <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
         </div>
+        <div class="picpick-filter-section">
+          <label class="picpick-filter-row">
+            <input type="checkbox" id="picpick-advanced-filters">
+            <span>ルールフィルタ</span>
+          </label>
+          <div class="picpick-filter-grid">
+            <div class="picpick-filter-field">
+              <label>横長上限</label>
+              <input type="number" id="picpick-max-aspect" min="0.1" step="0.1">
+            </div>
+            <div class="picpick-filter-field">
+              <label>pHash距離</label>
+              <input type="number" id="picpick-phash-threshold" min="0" max="32" step="1">
+            </div>
+          </div>
+        </div>
         <div class="picpick-save-destination">
           <label>保存先</label>
           <select id="picpick-save-destination-select" class="picpick-preset-select">
@@ -2796,6 +3036,9 @@ function createOverlay() {
     const confirmBtn = document.getElementById('picpick-confirm-btn');
     const presetSelect = document.getElementById('picpick-preset-select');
     const minWidthInput = document.getElementById('picpick-min-width');
+    const advancedFiltersInput = document.getElementById('picpick-advanced-filters');
+    const maxAspectInput = document.getElementById('picpick-max-aspect');
+    const pHashThresholdInput = document.getElementById('picpick-phash-threshold');
     const rescanBtn = document.getElementById('picpick-rescan-btn');
     cancelBtn?.addEventListener('click', hideConfirmDialog);
     confirmBtn?.addEventListener('click', handleConfirmDownload);
@@ -2811,6 +3054,9 @@ function createOverlay() {
         presetSelect.value = '';
         updateFilteredCount();
     });
+    advancedFiltersInput?.addEventListener('change', updateFilteredCount);
+    maxAspectInput?.addEventListener('input', updateFilteredCount);
+    pHashThresholdInput?.addEventListener('input', updateFilteredCount);
     // カスタム名モードのイベント
     const customNameSection = document.getElementById('picpick-custom-name-section');
     const customNameInput = document.getElementById('picpick-custom-name');
@@ -3052,6 +3298,9 @@ function showConfirmDialog() {
     const presetSelect = document.getElementById('picpick-preset-select');
     const minWidthInput = document.getElementById('picpick-min-width');
     const ruleSelect = document.getElementById('picpick-rule-select');
+    const advancedFiltersInput = document.getElementById('picpick-advanced-filters');
+    const maxAspectInput = document.getElementById('picpick-max-aspect');
+    const pHashThresholdInput = document.getElementById('picpick-phash-threshold');
     if (!dialog || !countEl || !presetSelect || !minWidthInput)
         return;
     // サイトルール選択肢を初期化
@@ -3076,6 +3325,12 @@ function showConfirmDialog() {
         presetSelect.value = currentSettings.selectedPreset;
     }
     minWidthInput.value = String(currentSettings.minWidth);
+    if (advancedFiltersInput)
+        advancedFiltersInput.checked = currentSettings.advancedImageFiltersEnabled !== false;
+    if (maxAspectInput)
+        maxAspectInput.value = String(currentSettings.maxAspectRatio ?? DEFAULT_SETTINGS.maxAspectRatio);
+    if (pHashThresholdInput)
+        pHashThresholdInput.value = String(currentSettings.pHashDistanceThreshold ?? DEFAULT_SETTINGS.pHashDistanceThreshold);
     // 日付チェックボックスの初期値を設定
     const includeDateCheckbox = document.getElementById('picpick-include-date');
     if (includeDateCheckbox) {
@@ -3231,6 +3486,7 @@ function updateFilteredCount() {
         ...currentSettings,
         minWidth: parseInt(minWidthInput.value) || 0,
         minHeight: 0,
+        ...readAdvancedFilterInputs(),
     };
     const filterResult = filterImages(scannedImages, tempSettings);
     const filteredImages = filterResult.passed;
@@ -3254,6 +3510,20 @@ function updateFilteredCount() {
     else {
         imageListEl.style.display = 'none';
     }
+}
+function readAdvancedFilterInputs() {
+    const advancedFiltersInput = document.getElementById('picpick-advanced-filters');
+    const maxAspectInput = document.getElementById('picpick-max-aspect');
+    const pHashThresholdInput = document.getElementById('picpick-phash-threshold');
+    return {
+        advancedImageFiltersEnabled: advancedFiltersInput ? advancedFiltersInput.checked : currentSettings.advancedImageFiltersEnabled,
+        aspectRatioFilterEnabled: true,
+        maxAspectRatio: parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio,
+        pHashDistanceThreshold: parseInt(pHashThresholdInput?.value || '', 10) || DEFAULT_SETTINGS.pHashDistanceThreshold,
+        keywordFilterEnabled: true,
+        positionHeuristicFilterEnabled: true,
+        pHashDuplicateFilterEnabled: true,
+    };
 }
 // オーバーレイのファイル名プレビューを更新
 function updateOverlayFilenamePreview() {
@@ -3421,6 +3691,7 @@ async function handleConfirmDownload() {
         minWidth: parseInt(minWidthInput.value) || 0,
         minHeight: 0,
         selectedPreset: presetSelect?.value || '',
+        ...readAdvancedFilterInputs(),
     });
     // 設定を保存（エラーは無視）
     if (isExtensionContextValid()) {
@@ -3450,6 +3721,13 @@ async function handleConfirmDownload() {
         imagesToDownload = await prefetchFanboxImages(imagesToDownload, (current, total) => {
             statusText.textContent = `画像を取得中... ${current}/${total}`;
         });
+        const pHashResult = await filterNearDuplicateImages(imagesToDownload, settings);
+        imagesToDownload = pHashResult.passed;
+        if (imagesToDownload.length === 0) {
+            statusText.textContent = '近似重複フィルタ後に保存対象がありません';
+            setTimeout(() => status.classList.remove('show'), 2000);
+            return;
+        }
         // ダウンロード実行
         if (!isExtensionContextValid()) {
             throw new Error('拡張機能が更新されました。ページを再読み込みしてください。');
@@ -4260,6 +4538,625 @@ function getIconSvg(state) {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v8.17l3.59-3.58L18 10l-6 6-6-6 1.41-1.41L11 12.17V4Zm-6 14h14v2H5v-2Z"/></svg>';
 }
 
+;// ./src/crawlers/fanbox-crawler.ts
+/**
+ * FANBOX クリエイターの全投稿を API で列挙する。
+ *
+ * FANBOX は投稿一覧をページ分割で返す API を持つ:
+ *   1) post.paginateCreator?creatorId=X
+ *        → body: string[]   各要素が post.listCreator のページURL（cursor付き）
+ *   2) 各ページURL（post.listCreator 系）
+ *        → body.items: 投稿の配列
+ *
+ * paginateCreator が使えない場合は listCreator の nextUrl を辿るフォールバックを用いる。
+ * いずれも content script（fanbox.cc 上）から credentials付きで叩く。
+ */
+/** 現在のページ URL から creatorId を推定する。判定できなければ null。 */
+function detectFanboxCreatorId() {
+    // www.fanbox.cc/@creator/...
+    const atMatch = window.location.pathname.match(/\/@([\w-]+)/);
+    if (atMatch)
+        return atMatch[1];
+    // creator.fanbox.cc
+    const host = window.location.hostname;
+    if (host.endsWith('.fanbox.cc')) {
+        const sub = host.replace(/\.fanbox\.cc$/, '');
+        if (sub && sub !== 'www' && sub !== 'api')
+            return sub;
+    }
+    return null;
+}
+async function fetchJson(url) {
+    try {
+        const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
+        if (!res.ok)
+            return null;
+        return (await res.json());
+    }
+    catch {
+        return null;
+    }
+}
+function fanbox_crawler_sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function listCreatorItems(response) {
+    if (!response?.body)
+        return [];
+    if (Array.isArray(response.body))
+        return response.body;
+    return response.body.items || [];
+}
+function listCreatorNextUrl(response) {
+    if (!response?.body || Array.isArray(response.body))
+        return null;
+    return response.body.nextUrl || null;
+}
+/**
+ * creatorId の全投稿（一覧メタデータ）を新しい順で返す。
+ * onProgress には累計取得件数を通知する。
+ */
+async function enumerateCreatorPosts(creatorId, onProgress, requestDelayMs = 300) {
+    const items = [];
+    const seen = new Set();
+    const pushItems = (list) => {
+        for (const it of list || []) {
+            if (it && it.id && !seen.has(it.id)) {
+                seen.add(it.id);
+                items.push(it);
+            }
+        }
+    };
+    // 1) paginateCreator でページURL一覧を取得
+    const pages = await fetchJson(`https://api.fanbox.cc/post.paginateCreator?creatorId=${encodeURIComponent(creatorId)}`);
+    if (pages?.body && Array.isArray(pages.body) && pages.body.length > 0) {
+        for (const pageUrl of pages.body) {
+            const list = await fetchJson(pageUrl);
+            pushItems(listCreatorItems(list));
+            onProgress?.(items.length);
+            if (requestDelayMs > 0)
+                await fanbox_crawler_sleep(requestDelayMs);
+        }
+        return items;
+    }
+    // 2) フォールバック: listCreator を nextUrl で辿る
+    let nextUrl = `https://api.fanbox.cc/post.listCreator?creatorId=${encodeURIComponent(creatorId)}&limit=10`;
+    let guard = 0;
+    while (nextUrl && guard < 1000) {
+        const list = await fetchJson(nextUrl);
+        if (!list?.body)
+            break;
+        pushItems(listCreatorItems(list));
+        onProgress?.(items.length);
+        nextUrl = listCreatorNextUrl(list);
+        guard++;
+        if (requestDelayMs > 0)
+            await fanbox_crawler_sleep(requestDelayMs);
+    }
+    return items;
+}
+
+;// ./src/utils/saved-index.ts
+/**
+ * 保存済み画像の台帳（重複スキップ用）。
+ *
+ * chrome.storage.sync は容量が小さい（〜100KB）ため、クリエイター単位で
+ * 大量に増える保存済みIDの記録には IndexedDB を使う。
+ * キーは `${creatorId}::${imageId}` で、再サブスク時はこの台帳と
+ * 突き合わせて未保存の画像だけを抽出する。
+ */
+const DB_NAME = 'picpick';
+const DB_VERSION = 1;
+const STORE = 'savedImages';
+function openDb() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(STORE)) {
+                const store = db.createObjectStore(STORE, { keyPath: 'key' });
+                store.createIndex('creatorId', 'creatorId', { unique: false });
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+function makeKey(creatorId, imageId) {
+    return `${creatorId}::${imageId}`;
+}
+/** creatorId について保存済みの imageId 集合を返す。 */
+async function getSavedImageIds(creatorId) {
+    const db = await openDb();
+    try {
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readonly');
+            const index = tx.objectStore(STORE).index('creatorId');
+            const req = index.getAll(IDBKeyRange.only(creatorId));
+            req.onsuccess = () => {
+                const set = new Set();
+                for (const rec of req.result || []) {
+                    set.add(rec.imageId);
+                }
+                resolve(set);
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+    finally {
+        db.close();
+    }
+}
+/** 画像IDを保存済みとして記録する。 */
+async function markImagesSaved(creatorId, postId, imageIds) {
+    if (imageIds.length === 0)
+        return;
+    const db = await openDb();
+    try {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readwrite');
+            const store = tx.objectStore(STORE);
+            const now = Date.now();
+            for (const imageId of imageIds) {
+                const record = {
+                    key: makeKey(creatorId, imageId),
+                    creatorId,
+                    postId,
+                    imageId,
+                    savedAt: now,
+                };
+                store.put(record);
+            }
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+    finally {
+        db.close();
+    }
+}
+/** creatorId の保存済み画像数を返す。 */
+async function getSavedCount(creatorId) {
+    const db = await openDb();
+    try {
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readonly');
+            const index = tx.objectStore(STORE).index('creatorId');
+            const req = index.count(IDBKeyRange.only(creatorId));
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+    finally {
+        db.close();
+    }
+}
+
+;// ./src/content/creator-batch.ts
+/**
+ * FANBOX クリエイター一括保存 UI（Phase 1）
+ *
+ * 既存のオーバーレイ（単一投稿スキャン）には手を入れず、独立した
+ * ボタン＋パネルを FANBOX 上に追加する。
+ *
+ * フロー:
+ *   1) creatorId の全投稿を API 列挙（fanbox-crawler）
+ *   2) 各投稿の画像を API 取得（fanbox-api）
+ *   3) サイズフィルタ + 重複台帳（saved-index）で未保存だけ抽出
+ *   4) content script 上で原寸画像を prefetch（Referer + Cookie 必須）
+ *   5) 既存の DOWNLOAD_IMAGES 経由で保存し、保存済みIDを台帳に記録
+ */
+
+
+
+
+
+
+let panelEl = null;
+let isRunning = false;
+let abortRequested = false;
+function initCreatorBatch() {
+    // api.fanbox.cc などDOMを持たないホストでは何もしない
+    if (window.location.hostname === 'api.fanbox.cc')
+        return;
+    if (!document.body)
+        return;
+    injectButton();
+}
+function injectButton() {
+    if (document.getElementById('picpick-batch-root'))
+        return;
+    const root = document.createElement('div');
+    root.id = 'picpick-batch-root';
+    root.innerHTML = `
+    <style>
+      #picpick-batch-root {
+        position: fixed; top: 20px; left: 12px; z-index: 999998;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      #picpick-batch-btn {
+        width: 44px; height: 44px; border-radius: 50%;
+        background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+        border: none; cursor: pointer; color: #fff;
+        box-shadow: 0 4px 12px rgba(14,165,233,0.4);
+        display: flex; align-items: center; justify-content: center;
+        transition: transform .2s ease, box-shadow .2s ease, opacity .2s ease;
+      }
+      #picpick-batch-btn:hover { transform: scale(1.08); }
+      #picpick-batch-btn.pb-ghosted { opacity: .28; }
+      #picpick-batch-btn.pb-ghosted:hover { opacity: .45; }
+      #picpick-batch-btn svg { width: 22px; height: 22px; fill: #fff; }
+      #picpick-batch-panel {
+        position: absolute; top: 52px; left: 0;
+        width: 320px; max-width: 90vw;
+        background: #fff; border-radius: 12px; padding: 16px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2); display: none;
+        color: #1f2937;
+      }
+      #picpick-batch-panel.show { display: block; }
+      .pb-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+      .pb-row { margin-bottom: 10px; }
+      .pb-row label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+      .pb-row input[type="text"], .pb-row input[type="number"], .pb-row input[type="date"] {
+        width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;
+        font-size: 13px; box-sizing: border-box;
+      }
+      .pb-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; }
+      .pb-check input { width: auto; margin: 0; }
+      .pb-grid2 { display: flex; gap: 8px; }
+      .pb-grid2 > div { flex: 1; }
+      .pb-filter-box { margin: 10px 0; padding: 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+      .pb-buttons { display: flex; gap: 8px; margin-top: 12px; }
+      .pb-btn { flex: 1; padding: 9px; border: none; border-radius: 8px; font-size: 13px;
+        font-weight: 500; cursor: pointer; }
+      .pb-btn-go { background: linear-gradient(135deg,#0ea5e9,#6366f1); color: #fff; }
+      .pb-btn-go:disabled { background: #9ca3af; cursor: not-allowed; }
+      .pb-btn-stop { background: #fee2e2; color: #b91c1c; }
+      .pb-progress { margin-top: 12px; font-size: 12px; color: #374151; min-height: 16px; }
+      .pb-log { margin-top: 8px; max-height: 160px; overflow-y: auto; font-size: 11px;
+        color: #6b7280; background: #f9fafb; border-radius: 6px; padding: 8px; line-height: 1.5;
+        display: none; }
+      .pb-log.show { display: block; }
+    </style>
+    <button id="picpick-batch-btn" title="このクリエイターを一括保存">
+      <svg viewBox="0 0 24 24"><path d="M4 5h16v2H4V5zm0 6h16v2H4v-2zm0 6h10v2H4v-2zm14.5-1.5L22 19l-3.5 3.5-1.4-1.4L18.2 20H16v-2h2.2l-1.1-1.1 1.4-1.4z"/></svg>
+    </button>
+    <div id="picpick-batch-panel">
+      <div class="pb-title">クリエイター一括保存</div>
+      <div class="pb-row">
+        <label>creatorId</label>
+        <input type="text" id="pb-creator" placeholder="例: creatorname">
+      </div>
+      <div class="pb-row pb-grid2">
+        <div>
+          <label>最小横幅 (px)</label>
+          <input type="number" id="pb-minwidth" min="0" value="800">
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <label class="pb-check"><input type="checkbox" id="pb-skip" checked> 未保存のみ</label>
+        </div>
+      </div>
+      <div class="pb-row pb-grid2">
+        <div>
+          <label>開始日（以降）</label>
+          <input type="date" id="pb-from">
+        </div>
+        <div>
+          <label>終了日（以前）</label>
+          <input type="date" id="pb-to">
+        </div>
+      </div>
+      <div class="pb-filter-box">
+        <label class="pb-check"><input type="checkbox" id="pb-advanced-filters" checked> ルールフィルタ</label>
+        <div class="pb-row pb-grid2" style="margin-top:8px;margin-bottom:0;">
+          <div>
+            <label>横長上限</label>
+            <input type="number" id="pb-max-aspect" min="0.1" step="0.1" value="3.2">
+          </div>
+          <div>
+            <label>pHash距離</label>
+            <input type="number" id="pb-phash-threshold" min="0" max="32" step="1" value="6">
+          </div>
+        </div>
+      </div>
+      <div class="pb-buttons">
+        <button class="pb-btn pb-btn-go" id="pb-go">開始</button>
+        <button class="pb-btn pb-btn-stop" id="pb-stop">中止</button>
+      </div>
+      <div class="pb-progress" id="pb-progress"></div>
+      <div class="pb-log" id="pb-log"></div>
+    </div>
+  `;
+    document.body.appendChild(root);
+    panelEl = root.querySelector('#picpick-batch-panel');
+    const btn = root.querySelector('#picpick-batch-btn');
+    btn?.addEventListener('click', togglePanel);
+    btn?.addEventListener('mousedown', (event) => {
+        if (event.button === 1) {
+            event.preventDefault();
+        }
+    });
+    btn?.addEventListener('auxclick', (event) => {
+        if (event.button !== 1)
+            return;
+        event.preventDefault();
+        event.stopPropagation();
+        btn.classList.toggle('pb-ghosted');
+    });
+    root.querySelector('#pb-go')?.addEventListener('click', () => void runBatch());
+    root.querySelector('#pb-stop')?.addEventListener('click', () => {
+        abortRequested = true;
+        setProgress('中止しています…');
+    });
+}
+function togglePanel() {
+    if (!panelEl)
+        return;
+    const show = !panelEl.classList.contains('show');
+    panelEl.classList.toggle('show', show);
+    if (show) {
+        const creatorInput = document.getElementById('pb-creator');
+        if (creatorInput && !creatorInput.value) {
+            creatorInput.value = detectFanboxCreatorId() || '';
+        }
+    }
+}
+function setProgress(text) {
+    const el = document.getElementById('pb-progress');
+    if (el)
+        el.textContent = text;
+}
+function log(text) {
+    const el = document.getElementById('pb-log');
+    if (!el)
+        return;
+    el.classList.add('show');
+    const line = document.createElement('div');
+    line.textContent = text;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+}
+async function runBatch() {
+    if (isRunning)
+        return;
+    const creatorInput = document.getElementById('pb-creator');
+    const minWidthInput = document.getElementById('pb-minwidth');
+    const skipInput = document.getElementById('pb-skip');
+    const fromInput = document.getElementById('pb-from');
+    const toInput = document.getElementById('pb-to');
+    const advancedFiltersInput = document.getElementById('pb-advanced-filters');
+    const maxAspectInput = document.getElementById('pb-max-aspect');
+    const pHashThresholdInput = document.getElementById('pb-phash-threshold');
+    const goBtn = document.getElementById('pb-go');
+    const creatorId = creatorInput?.value.trim();
+    if (!creatorId) {
+        setProgress('creatorId を入力してください');
+        return;
+    }
+    const minWidth = parseInt(minWidthInput?.value || '0', 10) || 0;
+    const skipSaved = skipInput?.checked !== false;
+    const fromTime = fromInput?.value ? new Date(fromInput.value).getTime() : null;
+    const toTime = toInput?.value ? new Date(`${toInput.value}T23:59:59`).getTime() : null;
+    isRunning = true;
+    abortRequested = false;
+    if (goBtn)
+        goBtn.disabled = true;
+    try {
+        const settings = await creator_batch_getSettings();
+        settings.activeRuleId = 'pixiv_fanbox'; // FANBOX用ファイル名プリセットを使う
+        settings.minWidth = minWidth;
+        settings.advancedImageFiltersEnabled = advancedFiltersInput?.checked !== false;
+        settings.maxAspectRatio = parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio;
+        settings.pHashDistanceThreshold = parseInt(pHashThresholdInput?.value || '', 10) || DEFAULT_SETTINGS.pHashDistanceThreshold;
+        const savedIds = skipSaved ? await getSavedImageIds(creatorId) : new Set();
+        if (skipSaved)
+            log(`保存済み: ${savedIds.size}枚（スキップ対象）`);
+        setProgress('投稿一覧を取得中…');
+        let posts = await enumerateCreatorPosts(creatorId, (n) => setProgress(`投稿一覧を取得中… ${n}件`));
+        // 範囲指定（日付）でフィルタ
+        posts = posts.filter((p) => withinDateRange(p, fromTime, toTime));
+        if (posts.length === 0) {
+            setProgress('対象の投稿がありません');
+            return;
+        }
+        log(`対象投稿: ${posts.length}件`);
+        let savedTotal = 0;
+        let skippedPosts = 0;
+        for (let i = 0; i < posts.length; i++) {
+            if (abortRequested) {
+                setProgress(`中止しました（${savedTotal}枚保存）`);
+                return;
+            }
+            const post = posts[i];
+            setProgress(`[${i + 1}/${posts.length}] ${post.title || post.id}`);
+            if (post.isRestricted) {
+                skippedPosts++;
+                log(`× 閲覧不可（プラン外）: ${post.title || post.id}`);
+                continue;
+            }
+            const data = await fetchFanboxPostInfo(post.id);
+            if (!data) {
+                log(`× 取得失敗: ${post.title || post.id}`);
+                continue;
+            }
+            const metadata = buildFanboxMetadata(data, post.id);
+            const allItems = collectFanboxApiImages(data);
+            // 重複スキップ + サイズフィルタ
+            let skippedSaved = 0;
+            let skippedSmall = 0;
+            const newItems = allItems.filter((item) => {
+                const url = fanboxItemUrl(item);
+                if (!url)
+                    return false;
+                if (skipSaved && savedIds.has(fanboxImageId(item, url))) {
+                    skippedSaved++;
+                    return false;
+                }
+                if (minWidth > 0 && item.width != null && item.width < minWidth) {
+                    skippedSmall++;
+                    return false;
+                }
+                return true;
+            });
+            if (newItems.length === 0) {
+                if (allItems.length > 0) {
+                    log(`- ${post.title || post.id}: 候補0/${allItems.length}枚（保存済み${skippedSaved}, 小サイズ${skippedSmall}）`);
+                }
+                continue;
+            }
+            const images = fanboxItemsToImageInfo(newItems, metadata);
+            const originalPairs = images.map((image, index) => ({ image, item: newItems[index] }));
+            const syncFilter = filterImages(images, settings);
+            const syncPassed = new Set(syncFilter.passed);
+            const syncPairs = originalPairs.filter((pair) => syncPassed.has(pair.image));
+            if (syncPairs.length === 0) {
+                log(`- ${post.title || post.id}: ルール除外 ${syncFilter.filtered.length}/${newItems.length}枚`);
+                continue;
+            }
+            const prefetched = await prefetchBlobs(syncPairs.map((pair) => pair.image));
+            const prefetchedPairs = prefetched.map((image, index) => ({ image, item: syncPairs[index].item }));
+            const pHashFilter = await filterNearDuplicateImages(prefetched, settings);
+            const pHashPassed = new Set(pHashFilter.passed);
+            const finalPairs = prefetchedPairs.filter((pair) => pHashPassed.has(pair.image));
+            if (finalPairs.length === 0) {
+                log(`- ${post.title || post.id}: pHash除外 ${pHashFilter.filtered.length}/${syncPairs.length}枚`);
+                continue;
+            }
+            const result = await sendDownload(finalPairs.map((pair) => pair.image), settings);
+            const succeeded = result.success ?? 0;
+            savedTotal += succeeded;
+            // 成功有無に関わらず、実際に保存へ渡した画像だけ台帳へ（再試行で二重保存を避ける）。
+            const ids = finalPairs.map((pair) => fanboxImageId(pair.item, fanboxItemUrl(pair.item)));
+            await markImagesSaved(creatorId, post.id, ids);
+            // 新着が含まれる最初の保存以降は savedIds にも反映
+            ids.forEach((id) => savedIds.add(id));
+            const detail = [
+                `候補${newItems.length}/${allItems.length}`,
+                syncFilter.filtered.length > 0 ? `ルール除外${syncFilter.filtered.length}` : '',
+                pHashFilter.filtered.length > 0 ? `pHash除外${pHashFilter.filtered.length}` : '',
+            ].filter(Boolean).join(', ');
+            log(`✓ ${post.title || post.id}: ${succeeded}/${finalPairs.length}枚（${detail}）`);
+            await creator_batch_sleep(400);
+        }
+        const skipNote = skippedPosts > 0 ? `（閲覧不可 ${skippedPosts}件スキップ）` : '';
+        setProgress(`完了: 合計 ${savedTotal}枚保存${skipNote}`);
+    }
+    catch (error) {
+        setProgress(`エラー: ${error.message}`);
+    }
+    finally {
+        isRunning = false;
+        if (goBtn)
+            goBtn.disabled = false;
+    }
+}
+function withinDateRange(post, from, to) {
+    if (from == null && to == null)
+        return true;
+    const t = post.publishedDatetime ? new Date(post.publishedDatetime).getTime() : NaN;
+    if (Number.isNaN(t))
+        return true; // 日付不明は除外しない
+    if (from != null && t < from)
+        return false;
+    if (to != null && t > to)
+        return false;
+    return true;
+}
+/**
+ * FANBOX 原寸画像（downloads.fanbox.cc）を content script 上で prefetch する。
+ * fanbox.cc 上で動作するため Referer と Cookie が正しく付与される。
+ */
+async function prefetchBlobs(images) {
+    const result = [...images];
+    for (let i = 0; i < result.length; i++) {
+        const img = result[i];
+        if (!creator_batch_isFanboxDownloadUrl(img.url))
+            continue;
+        try {
+            const response = await fetch(img.url, {
+                credentials: 'include',
+                cache: 'no-store',
+                referrer: 'https://www.fanbox.cc/',
+                referrerPolicy: 'strict-origin-when-cross-origin',
+            });
+            if (!response.ok)
+                continue;
+            const blobData = await response.arrayBuffer();
+            const blobMimeType = response.headers.get('content-type') || 'image/jpeg';
+            if (creator_batch_isValidImageResponse(blobMimeType, blobData)) {
+                result[i] = { ...img, blobData, blobMimeType, downloadReferrer: 'https://www.fanbox.cc/' };
+            }
+        }
+        catch {
+            // service worker 側のダウンロードにフォールバック
+        }
+    }
+    return result;
+}
+function creator_batch_isFanboxDownloadUrl(url) {
+    try {
+        return new URL(url).hostname === 'downloads.fanbox.cc';
+    }
+    catch {
+        return false;
+    }
+}
+function creator_batch_isValidImageResponse(contentType, buffer) {
+    if (contentType.toLowerCase().startsWith('image/'))
+        return true;
+    const bytes = new Uint8Array(buffer.slice(0, 12));
+    const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+    const isWebp = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+        bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+    return isJpeg || isPng || isGif || isWebp;
+}
+async function sendDownload(images, settings) {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({
+                type: 'DOWNLOAD_IMAGES',
+                images,
+                settings,
+                saveAs: false,
+                waitForCompletion: true,
+                interDownloadDelayMs: 500,
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ error: chrome.runtime.lastError.message });
+                    return;
+                }
+                resolve(response || {});
+            });
+        }
+        catch (error) {
+            resolve({ error: error.message });
+        }
+    });
+}
+async function creator_batch_getSettings() {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
+                if (chrome.runtime.lastError || !response || response.error) {
+                    resolve(normalizeSettings(DEFAULT_SETTINGS));
+                }
+                else {
+                    resolve(normalizeSettings(response));
+                }
+            });
+        }
+        catch {
+            resolve(normalizeSettings(DEFAULT_SETTINGS));
+        }
+    });
+}
+function creator_batch_sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 ;// ./src/content/content-script.ts
 
 
@@ -4267,16 +5164,21 @@ function getIconSvg(state) {
 
 
 
-// ページ読み込み完了後にオーバーレイを初期化
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        initOverlay();
-        initXInlineSave();
-    });
-}
-else {
+
+function initContentFeatures() {
     initOverlay();
     initXInlineSave();
+    // FANBOX ではクリエイター一括保存UIも有効化
+    if (window.location.hostname.endsWith('fanbox.cc')) {
+        initCreatorBatch();
+    }
+}
+// ページ読み込み完了後に初期化
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initContentFeatures);
+}
+else {
+    initContentFeatures();
 }
 // メッセージリスナー（ポップアップからの呼び出し用）
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

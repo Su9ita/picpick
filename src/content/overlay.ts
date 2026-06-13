@@ -1,6 +1,6 @@
 // オーバーレイUIを作成・管理
 import { getExtractor, detectSite } from '../extractors';
-import { filterImages } from '../utils/image-filter';
+import { filterImages, filterNearDuplicateImages } from '../utils/image-filter';
 import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
@@ -425,6 +425,44 @@ function createOverlay(): void {
         margin: 0;
         cursor: pointer;
       }
+      .picpick-filter-section {
+        margin: 0 0 14px;
+        padding: 10px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+      }
+      .picpick-filter-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #374151;
+        cursor: pointer;
+      }
+      .picpick-filter-row input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+      }
+      .picpick-filter-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .picpick-filter-field label {
+        display: block;
+        font-size: 11px;
+        color: #6b7280;
+        margin-bottom: 3px;
+      }
+      .picpick-filter-field input {
+        width: 100%;
+        padding: 6px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        box-sizing: border-box;
+      }
     </style>
     <button id="picpick-btn" title="画像をスキャン / ドラッグで移動">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -485,6 +523,22 @@ function createOverlay(): void {
             <input type="number" id="picpick-min-width" min="0" value="800">
           </div>
         </div>
+        <div class="picpick-filter-section">
+          <label class="picpick-filter-row">
+            <input type="checkbox" id="picpick-advanced-filters">
+            <span>ルールフィルタ</span>
+          </label>
+          <div class="picpick-filter-grid">
+            <div class="picpick-filter-field">
+              <label>横長上限</label>
+              <input type="number" id="picpick-max-aspect" min="0.1" step="0.1">
+            </div>
+            <div class="picpick-filter-field">
+              <label>pHash距離</label>
+              <input type="number" id="picpick-phash-threshold" min="0" max="32" step="1">
+            </div>
+          </div>
+        </div>
         <div class="picpick-save-destination">
           <label>保存先</label>
           <select id="picpick-save-destination-select" class="picpick-preset-select">
@@ -535,6 +589,9 @@ function createOverlay(): void {
   const confirmBtn = document.getElementById('picpick-confirm-btn');
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
+  const advancedFiltersInput = document.getElementById('picpick-advanced-filters') as HTMLInputElement;
+  const maxAspectInput = document.getElementById('picpick-max-aspect') as HTMLInputElement;
+  const pHashThresholdInput = document.getElementById('picpick-phash-threshold') as HTMLInputElement;
 
   const rescanBtn = document.getElementById('picpick-rescan-btn');
 
@@ -554,6 +611,9 @@ function createOverlay(): void {
     presetSelect.value = '';
     updateFilteredCount();
   });
+  advancedFiltersInput?.addEventListener('change', updateFilteredCount);
+  maxAspectInput?.addEventListener('input', updateFilteredCount);
+  pHashThresholdInput?.addEventListener('input', updateFilteredCount);
 
   // カスタム名モードのイベント
   const customNameSection = document.getElementById('picpick-custom-name-section') as HTMLDivElement;
@@ -821,6 +881,9 @@ function showConfirmDialog(): void {
   const presetSelect = document.getElementById('picpick-preset-select') as HTMLSelectElement;
   const minWidthInput = document.getElementById('picpick-min-width') as HTMLInputElement;
   const ruleSelect = document.getElementById('picpick-rule-select') as HTMLSelectElement;
+  const advancedFiltersInput = document.getElementById('picpick-advanced-filters') as HTMLInputElement;
+  const maxAspectInput = document.getElementById('picpick-max-aspect') as HTMLInputElement;
+  const pHashThresholdInput = document.getElementById('picpick-phash-threshold') as HTMLInputElement;
 
   if (!dialog || !countEl || !presetSelect || !minWidthInput) return;
 
@@ -848,6 +911,9 @@ function showConfirmDialog(): void {
     presetSelect.value = currentSettings.selectedPreset;
   }
   minWidthInput.value = String(currentSettings.minWidth);
+  if (advancedFiltersInput) advancedFiltersInput.checked = currentSettings.advancedImageFiltersEnabled !== false;
+  if (maxAspectInput) maxAspectInput.value = String(currentSettings.maxAspectRatio ?? DEFAULT_SETTINGS.maxAspectRatio);
+  if (pHashThresholdInput) pHashThresholdInput.value = String(currentSettings.pHashDistanceThreshold ?? DEFAULT_SETTINGS.pHashDistanceThreshold);
 
   // 日付チェックボックスの初期値を設定
   const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
@@ -1020,6 +1086,7 @@ function updateFilteredCount(): void {
     ...currentSettings,
     minWidth: parseInt(minWidthInput.value) || 0,
     minHeight: 0,
+    ...readAdvancedFilterInputs(),
   };
 
   const filterResult = filterImages(scannedImages, tempSettings);
@@ -1045,6 +1112,22 @@ function updateFilteredCount(): void {
   } else {
     imageListEl.style.display = 'none';
   }
+}
+
+function readAdvancedFilterInputs(): Partial<Settings> {
+  const advancedFiltersInput = document.getElementById('picpick-advanced-filters') as HTMLInputElement;
+  const maxAspectInput = document.getElementById('picpick-max-aspect') as HTMLInputElement;
+  const pHashThresholdInput = document.getElementById('picpick-phash-threshold') as HTMLInputElement;
+
+  return {
+    advancedImageFiltersEnabled: advancedFiltersInput ? advancedFiltersInput.checked : currentSettings.advancedImageFiltersEnabled,
+    aspectRatioFilterEnabled: true,
+    maxAspectRatio: parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio,
+    pHashDistanceThreshold: parseInt(pHashThresholdInput?.value || '', 10) || DEFAULT_SETTINGS.pHashDistanceThreshold,
+    keywordFilterEnabled: true,
+    positionHeuristicFilterEnabled: true,
+    pHashDuplicateFilterEnabled: true,
+  };
 }
 
 
@@ -1235,6 +1318,7 @@ async function handleConfirmDownload(): Promise<void> {
     minWidth: parseInt(minWidthInput.value) || 0,
     minHeight: 0,
     selectedPreset: presetSelect?.value || '',
+    ...readAdvancedFilterInputs(),
   });
 
   // 設定を保存（エラーは無視）
@@ -1269,6 +1353,15 @@ async function handleConfirmDownload(): Promise<void> {
     imagesToDownload = await prefetchFanboxImages(imagesToDownload, (current, total) => {
       statusText.textContent = `画像を取得中... ${current}/${total}`;
     });
+
+    const pHashResult = await filterNearDuplicateImages(imagesToDownload, settings);
+    imagesToDownload = pHashResult.passed;
+
+    if (imagesToDownload.length === 0) {
+      statusText.textContent = '近似重複フィルタ後に保存対象がありません';
+      setTimeout(() => status.classList.remove('show'), 2000);
+      return;
+    }
 
     // ダウンロード実行
     if (!isExtensionContextValid()) {
