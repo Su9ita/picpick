@@ -1963,6 +1963,8 @@ const DEFAULT_SETTINGS = {
     minHeight: 0,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
     downloadFolder: '',
+    defaultDownloadFolderLabel: 'ダウンロードフォルダ',
+    defaultDownloadFolderPath: '',
     downloadFolderPresets: [
         { id: 'picpick', label: 'picpick', folder: 'picpick' },
     ],
@@ -2126,6 +2128,10 @@ function mergeDownloadFolderPresets(saved) {
     }
     return result;
 }
+function normalizeDefaultDownloadFolderLabel(label) {
+    const value = typeof label === 'string' ? label.trim() : '';
+    return value || DEFAULT_SETTINGS.defaultDownloadFolderLabel || 'ダウンロードフォルダ';
+}
 function normalizeSettings(input) {
     const saved = input || {};
     const ruleFilenamePresets = cloneFilenamePresets(DEFAULT_RULE_FILENAME_PRESETS);
@@ -2192,6 +2198,8 @@ function normalizeSettings(input) {
             ...(saved.ruleSpecificPresets || {}),
         },
         downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+        defaultDownloadFolderLabel: normalizeDefaultDownloadFolderLabel(saved.defaultDownloadFolderLabel),
+        defaultDownloadFolderPath: sanitizeDownloadFolder(saved.defaultDownloadFolderPath || saved.downloadFolder || ''),
         selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
         includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
         advancedImageFiltersEnabled: saved.advancedImageFiltersEnabled !== undefined ? saved.advancedImageFiltersEnabled : DEFAULT_SETTINGS.advancedImageFiltersEnabled,
@@ -2244,8 +2252,11 @@ function normalizeNumber(value, fallback, min, max) {
 function getSelectedDownloadFolder(settings) {
     const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
     if (selectedId === 'downloads')
-        return '';
+        return sanitizeDownloadFolder(settings.defaultDownloadFolderPath || '');
     return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
+}
+function getDefaultDownloadFolderLabel(settings) {
+    return normalizeDefaultDownloadFolderLabel(settings.defaultDownloadFolderLabel);
 }
 function getRuleFilenamePresets(settings, ruleId) {
     return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];
@@ -2452,8 +2463,20 @@ function sanitizeFilename(filename) {
         .slice(0, 200);
 }
 
+;// ./src/content/icon-ghost.ts
+let iconGhosted = false;
+function applyIconGhostState() {
+    document.getElementById('picpick-btn')?.classList.toggle('picpick-ghosted', iconGhosted);
+    document.getElementById('picpick-batch-btn')?.classList.toggle('pb-ghosted', iconGhosted);
+}
+function toggleIconGhostState() {
+    iconGhosted = !iconGhosted;
+    applyIconGhostState();
+}
+
 ;// ./src/content/overlay.ts
 // オーバーレイUIを作成・管理
+
 
 
 
@@ -2465,7 +2488,6 @@ let isDownloading = false;
 let scannedImages = [];
 let currentSettings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
-let overlayGhosted = false;
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
 function getRuleIdForCurrentPage(url) {
@@ -3008,6 +3030,7 @@ function createOverlay() {
     restoreOverlayPosition();
     const btn = document.getElementById('picpick-btn');
     if (btn) {
+        applyIconGhostState();
         setupDraggableOverlay(btn);
         btn.addEventListener('mousedown', (event) => {
             if (event.button === 1) {
@@ -3019,7 +3042,7 @@ function createOverlay() {
                 return;
             event.preventDefault();
             event.stopPropagation();
-            toggleOverlayGhosted();
+            toggleIconGhostState();
         });
         btn.addEventListener('click', (event) => {
             if (suppressNextOverlayClick) {
@@ -3213,13 +3236,6 @@ function setupDraggableOverlay(btn) {
         btn.classList.remove('picpick-dragging');
         pointerId = null;
     });
-}
-function toggleOverlayGhosted() {
-    const btn = document.getElementById('picpick-btn');
-    if (!btn)
-        return;
-    overlayGhosted = !overlayGhosted;
-    btn.classList.toggle('picpick-ghosted', overlayGhosted);
 }
 function clampOverlayPosition(left, top) {
     const margin = 8;
@@ -3601,7 +3617,9 @@ function updateSaveDestinationDropdown() {
     select.innerHTML = '';
     const downloadsOption = document.createElement('option');
     downloadsOption.value = 'downloads';
-    downloadsOption.textContent = 'ダウンロードフォルダ';
+    downloadsOption.textContent = currentSettings.defaultDownloadFolderPath
+        ? `${getDefaultDownloadFolderLabel(currentSettings)} (${currentSettings.defaultDownloadFolderPath})`
+        : getDefaultDownloadFolderLabel(currentSettings);
     select.appendChild(downloadsOption);
     for (const preset of currentSettings.downloadFolderPresets || []) {
         const option = document.createElement('option');
@@ -4752,6 +4770,7 @@ async function getSavedCount(creatorId) {
 
 
 
+
 let panelEl = null;
 let isRunning = false;
 let abortRequested = false;
@@ -4871,6 +4890,7 @@ function injectButton() {
     document.body.appendChild(root);
     panelEl = root.querySelector('#picpick-batch-panel');
     const btn = root.querySelector('#picpick-batch-btn');
+    applyIconGhostState();
     btn?.addEventListener('click', togglePanel);
     btn?.addEventListener('mousedown', (event) => {
         if (event.button === 1) {
@@ -4882,7 +4902,7 @@ function injectButton() {
             return;
         event.preventDefault();
         event.stopPropagation();
-        btn.classList.toggle('pb-ghosted');
+        toggleIconGhostState();
     });
     root.querySelector('#pb-go')?.addEventListener('click', () => void runBatch());
     root.querySelector('#pb-stop')?.addEventListener('click', () => {

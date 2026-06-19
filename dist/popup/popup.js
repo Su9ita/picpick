@@ -526,6 +526,8 @@ const DEFAULT_SETTINGS = {
     minHeight: 0,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
     downloadFolder: '',
+    defaultDownloadFolderLabel: 'ダウンロードフォルダ',
+    defaultDownloadFolderPath: '',
     downloadFolderPresets: [
         { id: 'picpick', label: 'picpick', folder: 'picpick' },
     ],
@@ -690,6 +692,10 @@ function mergeDownloadFolderPresets(saved) {
     }
     return result;
 }
+function normalizeDefaultDownloadFolderLabel(label) {
+    const value = typeof label === 'string' ? label.trim() : '';
+    return value || DEFAULT_SETTINGS.defaultDownloadFolderLabel || 'ダウンロードフォルダ';
+}
 function normalizeSettings(input) {
     const saved = input || {};
     const ruleFilenamePresets = cloneFilenamePresets(DEFAULT_RULE_FILENAME_PRESETS);
@@ -756,6 +762,8 @@ function normalizeSettings(input) {
             ...(saved.ruleSpecificPresets || {}),
         },
         downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+        defaultDownloadFolderLabel: normalizeDefaultDownloadFolderLabel(saved.defaultDownloadFolderLabel),
+        defaultDownloadFolderPath: sanitizeDownloadFolder(saved.defaultDownloadFolderPath || saved.downloadFolder || ''),
         selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
         includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
         advancedImageFiltersEnabled: saved.advancedImageFiltersEnabled !== undefined ? saved.advancedImageFiltersEnabled : DEFAULT_SETTINGS.advancedImageFiltersEnabled,
@@ -808,8 +816,11 @@ function normalizeNumber(value, fallback, min, max) {
 function getSelectedDownloadFolder(settings) {
     const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
     if (selectedId === 'downloads')
-        return '';
+        return sanitizeDownloadFolder(settings.defaultDownloadFolderPath || '');
     return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
+}
+function getDefaultDownloadFolderLabel(settings) {
+    return normalizeDefaultDownloadFolderLabel(settings.defaultDownloadFolderLabel);
 }
 function getRuleFilenamePresets(settings, ruleId) {
     return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];
@@ -838,6 +849,8 @@ const newFilenamePresetLabel = document.getElementById('new-filename-preset-labe
 const newFilenamePresetTemplate = document.getElementById('new-filename-preset-template');
 const addFilenamePresetBtn = document.getElementById('add-filename-preset');
 const downloadFolderPresetList = document.getElementById('download-folder-preset-list');
+const defaultDownloadFolderLabelInput = document.getElementById('default-download-folder-label');
+const defaultDownloadFolderPathInput = document.getElementById('default-download-folder-path');
 const newDownloadFolderPresetInput = document.getElementById('new-download-folder-preset');
 const addDownloadFolderPresetBtn = document.getElementById('add-download-folder-preset');
 const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled');
@@ -1064,6 +1077,7 @@ function initGlobalSettings() {
             addDownloadFolderPreset();
     });
     saveGlobalSettingsBtn?.addEventListener('click', async () => {
+        updateDefaultDownloadFolderSettings();
         currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
         await saveSettings();
         showStatus('設定を保存しました');
@@ -1084,10 +1098,20 @@ function initGlobalSettings() {
     });
 }
 function renderGlobalSettings() {
+    if (defaultDownloadFolderLabelInput) {
+        defaultDownloadFolderLabelInput.value = getDefaultDownloadFolderLabel(currentSettings);
+    }
+    if (defaultDownloadFolderPathInput) {
+        defaultDownloadFolderPathInput.value = currentSettings.defaultDownloadFolderPath || '';
+    }
     if (scanScrollEnabledCheckbox)
         scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
     if (overlayEnabledCheckbox)
         overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
+}
+function updateDefaultDownloadFolderSettings() {
+    currentSettings.defaultDownloadFolderLabel = defaultDownloadFolderLabelInput?.value.trim() || 'ダウンロードフォルダ';
+    currentSettings.defaultDownloadFolderPath = popup_sanitizeDownloadFolder(defaultDownloadFolderPathInput?.value || '');
 }
 function popup_sanitizeDownloadFolder(folder) {
     return folder
@@ -1104,16 +1128,25 @@ function renderDownloadFolderPresetList() {
     if (!downloadFolderPresetList)
         return;
     const presets = currentSettings.downloadFolderPresets || [];
-    if (presets.length === 0) {
-        downloadFolderPresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
-        return;
-    }
-    downloadFolderPresetList.innerHTML = presets.map((preset, index) => `
+    const defaultLabel = getDefaultDownloadFolderLabel(currentSettings);
+    const defaultPath = currentSettings.defaultDownloadFolderPath || 'Chrome既定フォルダ直下';
+    downloadFolderPresetList.innerHTML = `
+    <div class="item-entry default-folder-entry">
+      <div class="folder-entry-text">
+        <span class="name">${escapeHtml(defaultLabel)}</span>
+        <small>${escapeHtml(defaultPath)}</small>
+      </div>
+      <span class="default-badge">標準</span>
+    </div>
+  ` + (presets.length === 0 ? '<p class="item-list-empty">追加プリセットなし</p>' : presets.map((preset, index) => `
     <div class="item-entry">
-      <span class="name">${escapeHtml(preset.label)}</span>
+      <div class="folder-entry-text">
+        <span class="name">${escapeHtml(preset.label)}</span>
+        <small>${escapeHtml(preset.folder)}</small>
+      </div>
       <button class="delete-btn" data-index="${index}">×</button>
     </div>
-  `).join('');
+  `).join(''));
     downloadFolderPresetList.querySelectorAll('.delete-btn').forEach((button) => {
         button.addEventListener('click', () => {
             const index = parseInt(button.dataset.index || '-1', 10);
@@ -1122,6 +1155,7 @@ function renderDownloadFolderPresetList() {
     });
 }
 function addDownloadFolderPreset() {
+    updateDefaultDownloadFolderSettings();
     const folder = popup_sanitizeDownloadFolder(newDownloadFolderPresetInput.value);
     if (!folder)
         return;

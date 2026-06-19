@@ -754,6 +754,40 @@ footer {
   color: #374151;
 }
 
+.folder-entry-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-entry-text .name {
+  display: block;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.folder-entry-text small {
+  display: block;
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.default-folder-entry {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.default-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .item-entry .delete-btn {
   background: none;
   border: none;

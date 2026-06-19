@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, DownloadFolderPreset, FilenamePreset, Settings, SizePreset } from '../types/settings';
 import { SiteRule } from '../types/site-rules';
-import { getRuleFilenamePresets, normalizeSettings } from '../utils/settings-normalizer';
+import { getDefaultDownloadFolderLabel, getRuleFilenamePresets, normalizeSettings } from '../utils/settings-normalizer';
 
 let currentSettings: Settings = normalizeSettings(DEFAULT_SETTINGS);
 
@@ -16,6 +16,8 @@ const newFilenamePresetTemplate = document.getElementById('new-filename-preset-t
 const addFilenamePresetBtn = document.getElementById('add-filename-preset') as HTMLButtonElement;
 
 const downloadFolderPresetList = document.getElementById('download-folder-preset-list') as HTMLDivElement;
+const defaultDownloadFolderLabelInput = document.getElementById('default-download-folder-label') as HTMLInputElement;
+const defaultDownloadFolderPathInput = document.getElementById('default-download-folder-path') as HTMLInputElement;
 const newDownloadFolderPresetInput = document.getElementById('new-download-folder-preset') as HTMLInputElement;
 const addDownloadFolderPresetBtn = document.getElementById('add-download-folder-preset') as HTMLButtonElement;
 const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled') as HTMLInputElement;
@@ -263,6 +265,7 @@ function initGlobalSettings(): void {
   });
 
   saveGlobalSettingsBtn?.addEventListener('click', async () => {
+    updateDefaultDownloadFolderSettings();
     currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
     await saveSettings();
     showStatus('設定を保存しました');
@@ -284,8 +287,19 @@ function initGlobalSettings(): void {
 }
 
 function renderGlobalSettings(): void {
+  if (defaultDownloadFolderLabelInput) {
+    defaultDownloadFolderLabelInput.value = getDefaultDownloadFolderLabel(currentSettings);
+  }
+  if (defaultDownloadFolderPathInput) {
+    defaultDownloadFolderPathInput.value = currentSettings.defaultDownloadFolderPath || '';
+  }
   if (scanScrollEnabledCheckbox) scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
   if (overlayEnabledCheckbox) overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
+}
+
+function updateDefaultDownloadFolderSettings(): void {
+  currentSettings.defaultDownloadFolderLabel = defaultDownloadFolderLabelInput?.value.trim() || 'ダウンロードフォルダ';
+  currentSettings.defaultDownloadFolderPath = sanitizeDownloadFolder(defaultDownloadFolderPathInput?.value || '');
 }
 
 function sanitizeDownloadFolder(folder: string): string {
@@ -304,18 +318,26 @@ function makeDownloadFolderPresetId(folder: string): string {
 function renderDownloadFolderPresetList(): void {
   if (!downloadFolderPresetList) return;
   const presets = currentSettings.downloadFolderPresets || [];
+  const defaultLabel = getDefaultDownloadFolderLabel(currentSettings);
+  const defaultPath = currentSettings.defaultDownloadFolderPath || 'Chrome既定フォルダ直下';
 
-  if (presets.length === 0) {
-    downloadFolderPresetList.innerHTML = '<p class="item-list-empty">登録なし</p>';
-    return;
-  }
-
-  downloadFolderPresetList.innerHTML = presets.map((preset, index) => `
+  downloadFolderPresetList.innerHTML = `
+    <div class="item-entry default-folder-entry">
+      <div class="folder-entry-text">
+        <span class="name">${escapeHtml(defaultLabel)}</span>
+        <small>${escapeHtml(defaultPath)}</small>
+      </div>
+      <span class="default-badge">標準</span>
+    </div>
+  ` + (presets.length === 0 ? '<p class="item-list-empty">追加プリセットなし</p>' : presets.map((preset, index) => `
     <div class="item-entry">
-      <span class="name">${escapeHtml(preset.label)}</span>
+      <div class="folder-entry-text">
+        <span class="name">${escapeHtml(preset.label)}</span>
+        <small>${escapeHtml(preset.folder)}</small>
+      </div>
       <button class="delete-btn" data-index="${index}">×</button>
     </div>
-  `).join('');
+  `).join(''));
 
   downloadFolderPresetList.querySelectorAll('.delete-btn').forEach((button) => {
     button.addEventListener('click', () => {
@@ -326,6 +348,7 @@ function renderDownloadFolderPresetList(): void {
 }
 
 function addDownloadFolderPreset(): void {
+  updateDefaultDownloadFolderSettings();
   const folder = sanitizeDownloadFolder(newDownloadFolderPresetInput.value);
   if (!folder) return;
 

@@ -526,6 +526,8 @@ const DEFAULT_SETTINGS = {
     minHeight: 0,
     enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
     downloadFolder: '',
+    defaultDownloadFolderLabel: 'ダウンロードフォルダ',
+    defaultDownloadFolderPath: '',
     downloadFolderPresets: [
         { id: 'picpick', label: 'picpick', folder: 'picpick' },
     ],
@@ -881,6 +883,10 @@ function mergeDownloadFolderPresets(saved) {
     }
     return result;
 }
+function normalizeDefaultDownloadFolderLabel(label) {
+    const value = typeof label === 'string' ? label.trim() : '';
+    return value || DEFAULT_SETTINGS.defaultDownloadFolderLabel || 'ダウンロードフォルダ';
+}
 function normalizeSettings(input) {
     const saved = input || {};
     const ruleFilenamePresets = cloneFilenamePresets(DEFAULT_RULE_FILENAME_PRESETS);
@@ -947,6 +953,8 @@ function normalizeSettings(input) {
             ...(saved.ruleSpecificPresets || {}),
         },
         downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+        defaultDownloadFolderLabel: normalizeDefaultDownloadFolderLabel(saved.defaultDownloadFolderLabel),
+        defaultDownloadFolderPath: sanitizeDownloadFolder(saved.defaultDownloadFolderPath || saved.downloadFolder || ''),
         selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
         includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
         advancedImageFiltersEnabled: saved.advancedImageFiltersEnabled !== undefined ? saved.advancedImageFiltersEnabled : DEFAULT_SETTINGS.advancedImageFiltersEnabled,
@@ -999,8 +1007,11 @@ function normalizeNumber(value, fallback, min, max) {
 function getSelectedDownloadFolder(settings) {
     const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
     if (selectedId === 'downloads')
-        return '';
+        return sanitizeDownloadFolder(settings.defaultDownloadFolderPath || '');
     return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
+}
+function getDefaultDownloadFolderLabel(settings) {
+    return normalizeDefaultDownloadFolderLabel(settings.defaultDownloadFolderLabel);
 }
 function getRuleFilenamePresets(settings, ruleId) {
     return settings.ruleFilenamePresets?.[ruleId] || settings.ruleFilenamePresets?.generic || [];

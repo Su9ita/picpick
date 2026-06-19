@@ -72,6 +72,15 @@
 
       <section id="global-settings" class="tab-content">
         <div class="setting-item">
+          <label>標準ダウンロード先</label>
+          <div class="preset-input-group stacked">
+            <input type="text" id="default-download-folder-label" placeholder="表示名: ダウンロードフォルダ">
+            <input type="text" id="default-download-folder-path" placeholder="保存パス: 空欄ならChromeの既定フォルダ直下">
+          </div>
+          <small>保存パスはChromeの既定ダウンロードフォルダ配下の相対パスです。例: picpick / SNS/picpick</small>
+        </div>
+
+        <div class="setting-item">
           <label>保存先プリセット</label>
           <div id="download-folder-preset-list" class="item-list"></div>
         </div>

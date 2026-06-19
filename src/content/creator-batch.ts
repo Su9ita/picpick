@@ -30,6 +30,7 @@ import {
 } from '../crawlers/fanbox-crawler';
 import { getSavedImageIds, markImagesSaved } from '../utils/saved-index';
 import { filterImages, filterNearDuplicateImages } from '../utils/image-filter';
+import { applyIconGhostState, toggleIconGhostState } from './icon-ghost';
 
 let panelEl: HTMLDivElement | null = null;
 let isRunning = false;
@@ -151,6 +152,7 @@ function injectButton(): void {
   panelEl = root.querySelector('#picpick-batch-panel');
 
   const btn = root.querySelector('#picpick-batch-btn') as HTMLButtonElement;
+  applyIconGhostState();
   btn?.addEventListener('click', togglePanel);
   btn?.addEventListener('mousedown', (event) => {
     if (event.button === 1) {
@@ -161,7 +163,7 @@ function injectButton(): void {
     if (event.button !== 1) return;
     event.preventDefault();
     event.stopPropagation();
-    btn.classList.toggle('pb-ghosted');
+    toggleIconGhostState();
   });
   (root.querySelector('#pb-go') as HTMLButtonElement)?.addEventListener('click', () => void runBatch());
   (root.querySelector('#pb-stop') as HTMLButtonElement)?.addEventListener('click', () => {

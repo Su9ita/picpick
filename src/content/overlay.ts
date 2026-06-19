@@ -4,15 +4,15 @@ import { filterImages, filterNearDuplicateImages } from '../utils/image-filter';
 import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
-import { getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
+import { getDefaultDownloadFolderLabel, getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 import { generateFilename, applyDateToTemplate } from '../utils/filename-template';
+import { applyIconGhostState, toggleIconGhostState } from './icon-ghost';
 
 let overlayContainer: HTMLDivElement | null = null;
 let isDownloading = false;
 let scannedImages: ImageInfo[] = [];
 let currentSettings: Settings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
-let overlayGhosted = false;
 
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
@@ -561,6 +561,7 @@ function createOverlay(): void {
 
   const btn = document.getElementById('picpick-btn');
   if (btn) {
+    applyIconGhostState();
     setupDraggableOverlay(btn);
     btn.addEventListener('mousedown', (event) => {
       if (event.button === 1) {
@@ -571,7 +572,7 @@ function createOverlay(): void {
       if (event.button !== 1) return;
       event.preventDefault();
       event.stopPropagation();
-      toggleOverlayGhosted();
+      toggleIconGhostState();
     });
     btn.addEventListener('click', (event) => {
       if (suppressNextOverlayClick) {
@@ -788,14 +789,6 @@ function setupDraggableOverlay(btn: HTMLElement): void {
     btn.classList.remove('picpick-dragging');
     pointerId = null;
   });
-}
-
-function toggleOverlayGhosted(): void {
-  const btn = document.getElementById('picpick-btn');
-  if (!btn) return;
-
-  overlayGhosted = !overlayGhosted;
-  btn.classList.toggle('picpick-ghosted', overlayGhosted);
 }
 
 function clampOverlayPosition(left: number, top: number): { left: number; top: number } {
@@ -1216,7 +1209,9 @@ function updateSaveDestinationDropdown(): void {
 
   const downloadsOption = document.createElement('option');
   downloadsOption.value = 'downloads';
-  downloadsOption.textContent = 'ダウンロードフォルダ';
+  downloadsOption.textContent = currentSettings.defaultDownloadFolderPath
+    ? `${getDefaultDownloadFolderLabel(currentSettings)} (${currentSettings.defaultDownloadFolderPath})`
+    : getDefaultDownloadFolderLabel(currentSettings);
   select.appendChild(downloadsOption);
 
   for (const preset of currentSettings.downloadFolderPresets || []) {

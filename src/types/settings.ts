@@ -36,6 +36,8 @@ export interface Settings {
   minHeight: number;
   enabledExtensions: string[];
   downloadFolder: string;
+  defaultDownloadFolderLabel?: string;
+  defaultDownloadFolderPath?: string;
   downloadFolderPresets?: DownloadFolderPreset[];
   selectedDownloadFolderPresetId?: string;
   scanScrollEnabled: boolean;  // スキャン時にスクロールしてLazy Loadを発火
@@ -147,6 +149,8 @@ export const DEFAULT_SETTINGS: Settings = {
   minHeight: 0,
   enabledExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
   downloadFolder: '',
+  defaultDownloadFolderLabel: 'ダウンロードフォルダ',
+  defaultDownloadFolderPath: '',
   downloadFolderPresets: [
     { id: 'picpick', label: 'picpick', folder: 'picpick' },
   ],

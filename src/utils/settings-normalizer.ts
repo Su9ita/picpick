@@ -113,6 +113,11 @@ function mergeDownloadFolderPresets(saved: DownloadFolderPreset[] | undefined): 
   return result;
 }
 
+function normalizeDefaultDownloadFolderLabel(label: unknown): string {
+  const value = typeof label === 'string' ? label.trim() : '';
+  return value || DEFAULT_SETTINGS.defaultDownloadFolderLabel || 'ダウンロードフォルダ';
+}
+
 export function normalizeSettings(input?: Partial<Settings> | null): Settings {
   const saved = input || {};
   const ruleFilenamePresets = cloneFilenamePresets(DEFAULT_RULE_FILENAME_PRESETS);
@@ -184,6 +189,8 @@ export function normalizeSettings(input?: Partial<Settings> | null): Settings {
       ...(saved.ruleSpecificPresets || {}),
     },
     downloadFolderPresets: mergeDownloadFolderPresets(saved.downloadFolderPresets),
+    defaultDownloadFolderLabel: normalizeDefaultDownloadFolderLabel(saved.defaultDownloadFolderLabel),
+    defaultDownloadFolderPath: sanitizeDownloadFolder(saved.defaultDownloadFolderPath || saved.downloadFolder || ''),
     selectedDownloadFolderPresetId: saved.selectedDownloadFolderPresetId || DEFAULT_SETTINGS.selectedDownloadFolderPresetId,
     includeDateInFilename: saved.includeDateInFilename !== undefined ? saved.includeDateInFilename : DEFAULT_SETTINGS.includeDateInFilename,
     advancedImageFiltersEnabled: saved.advancedImageFiltersEnabled !== undefined ? saved.advancedImageFiltersEnabled : DEFAULT_SETTINGS.advancedImageFiltersEnabled,
@@ -240,8 +247,12 @@ function normalizeNumber(value: unknown, fallback: number, min: number, max: num
 
 export function getSelectedDownloadFolder(settings: Settings): string {
   const selectedId = settings.selectedDownloadFolderPresetId || 'downloads';
-  if (selectedId === 'downloads') return '';
+  if (selectedId === 'downloads') return sanitizeDownloadFolder(settings.defaultDownloadFolderPath || '');
   return settings.downloadFolderPresets?.find((preset) => preset.id === selectedId)?.folder || '';
+}
+
+export function getDefaultDownloadFolderLabel(settings: Settings): string {
+  return normalizeDefaultDownloadFolderLabel(settings.defaultDownloadFolderLabel);
 }
 
 export function getRuleFilenamePresets(settings: Settings, ruleId: string): FilenamePreset[] {
