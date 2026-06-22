@@ -44,6 +44,7 @@ export interface Settings {
   skipDuplicates: boolean;
   overlayEnabled: boolean;  // オーバーレイの表示/非表示
   includeDateInFilename: boolean;  // ファイル名に日付を含めるか
+  xInlineDatePrefix: boolean;      // Xインラインボタン保存時に日付を強制付与
   advancedImageFiltersEnabled: boolean;  // ルールベースの追加除外を使う
   aspectRatioFilterEnabled: boolean;  // 極端な縦横比を除外する
   minAspectRatio: number;  // width / height の下限
@@ -159,6 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   skipDuplicates: true,
   overlayEnabled: true,  // デフォルトでオーバーレイを表示
   includeDateInFilename: true,  // デフォルトで日付を含める
+  xInlineDatePrefix: false,     // Xインラインボタンの日付強制付与はデフォルトOFF
   advancedImageFiltersEnabled: true,
   aspectRatioFilterEnabled: true,
   minAspectRatio: 0.35,

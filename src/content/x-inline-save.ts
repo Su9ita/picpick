@@ -17,6 +17,7 @@ let downloadedKeys = new Set<string>();
 let cachedDownloadSettings: { settings: Settings; expiresAt: number } | null = null;
 let pendingSettingsRequest: Promise<Settings> | null = null;
 const activeDownloadKeys = new Set<string>();
+const articleStateMap = new Map<string, { state: ButtonState; count?: number }>();
 
 type ButtonState = 'ready' | 'loading' | 'saved' | 'error';
 
@@ -79,6 +80,12 @@ function findActionBar(article: HTMLElement): HTMLElement | null {
 }
 
 function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
+  const existing = actionBar.querySelector<HTMLButtonElement>('.picpick-x-inline-button');
+  if (existing) {
+    restoreButtonState(article, existing);
+    return;
+  }
+
   const wrapper = document.createElement('div');
   wrapper.className = 'picpick-x-inline-slot';
 
@@ -88,18 +95,47 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
   button.setAttribute('aria-label', 'Picpickで画像を保存');
   button.title = 'Picpickで画像を保存';
   button.innerHTML = getIconSvg('ready');
-  button.addEventListener('click', (event) => {
+
+  // pointerdown で起動：click は pointerup 成立まで待つためXのレイヤー変動で不成立になる
+  button.addEventListener('pointerdown', (event: PointerEvent) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    spawnRipple(button);
     handleInlineDownload(article, button).catch((error) => {
       setButtonError(button, getErrorMessage(error));
       window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
     });
   });
 
+  // Xのポスト遷移へのバブルを阻止（click自体は処理しない）
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
   wrapper.appendChild(button);
   actionBar.appendChild(wrapper);
-  updateButtonStateForArticle(article);
+  restoreButtonState(article, button);
+}
+
+function restoreButtonState(article: HTMLElement, button: HTMLButtonElement): void {
+  const key = getArticleDownloadKey(article);
+  if (activeDownloadKeys.has(key)) {
+    setButtonState(button, 'loading', true);
+    return;
+  }
+  const saved = articleStateMap.get(key);
+  if (saved) {
+    if (saved.count != null) button.dataset.count = String(saved.count);
+    setButtonState(button, saved.state, true);
+  } else {
+    updateButtonStateForArticle(article);
+  }
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
 async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElement): Promise<void> {
@@ -107,12 +143,16 @@ async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElem
 
   const downloadKey = getArticleDownloadKey(article);
   if (activeDownloadKeys.has(downloadKey)) {
-    setButtonState(button, 'loading');
+    setButtonState(button, 'loading', true);
     return;
   }
 
   activeDownloadKeys.add(downloadKey);
-  setButtonState(button, 'loading');
+  articleStateMap.set(downloadKey, { state: 'loading' });
+  setButtonState(button, 'loading', true);
+
+  // ローディングリングを確実に1フレーム描画してから重いDOM走査へ
+  await nextPaint();
 
   try {
     const media = await extractDownloadMediaFromArticleWithRetry(article);
@@ -141,8 +181,10 @@ async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElem
     }
     await saveDownloadedKeys(downloadedKeys);
     button.dataset.count = String(media.length);
+    articleStateMap.set(downloadKey, { state: 'saved', count: media.length });
     setButtonState(button, 'saved');
   } catch (error) {
+    articleStateMap.set(downloadKey, { state: 'error' });
     setButtonError(button, getErrorMessage(error));
     window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
   } finally {
@@ -164,15 +206,17 @@ function updateButtonStateForArticle(article: HTMLElement): void {
   }
 }
 
-function setButtonState(button: HTMLButtonElement, state: ButtonState): void {
+function setButtonState(button: HTMLButtonElement, state: ButtonState, skipParticles = false): void {
+  const prev = button.dataset.state as ButtonState | undefined;
   button.dataset.state = state;
   delete button.dataset.error;
-  button.disabled = state === 'loading';
+  // disabled は使わない：pointerdown はdisabled状態でも効くが、UX/アクセシビリティ上不要
   button.innerHTML = getIconSvg(state);
 
   if (state === 'saved') {
     button.setAttribute('aria-label', 'Picpickで保存済み');
     button.title = `保存済み - クリックで再保存 (${button.dataset.count || '?'}件)`;
+    if (!skipParticles && prev !== 'saved') spawnSaveParticles(button);
   } else if (state === 'loading') {
     button.setAttribute('aria-label', 'Picpickで保存中');
     button.title = '保存中';
@@ -495,6 +539,7 @@ async function getDownloadSettings(): Promise<Settings> {
       minWidth: 0,
       minHeight: 0,
       selectedPreset: '',
+      includeDateInFilename: true,  // インラインボタン保存では設定値によらず日付を強制付与
     });
 
     cachedDownloadSettings = {
@@ -532,6 +577,38 @@ function getErrorMessage(error: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function spawnSaveParticles(button: HTMLButtonElement): void {
+  const rect = button.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const COUNT = 5;
+  const DISTANCE = 18;
+
+  const layer = document.createElement('div');
+  layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+
+  for (let i = 0; i < COUNT; i++) {
+    const rad = (Math.PI * 2 * i) / COUNT;
+    const dot = document.createElement('span');
+    dot.className = 'picpick-x-particle';
+    dot.style.left = `${cx}px`;
+    dot.style.top = `${cy}px`;
+    dot.style.setProperty('--dx', `${(Math.cos(rad) * DISTANCE).toFixed(1)}px`);
+    dot.style.setProperty('--dy', `${(Math.sin(rad) * DISTANCE).toFixed(1)}px`);
+    layer.appendChild(dot);
+  }
+
+  document.body.appendChild(layer);
+  window.setTimeout(() => layer.remove(), 480);
+}
+
+function spawnRipple(button: HTMLButtonElement): void {
+  button.classList.remove('picpick-x-ripple');
+  void button.offsetWidth;
+  button.classList.add('picpick-x-ripple');
+  window.setTimeout(() => button.classList.remove('picpick-x-ripple'), 300);
 }
 
 async function sendXTweetMediaMessage(postId: string): Promise<XTweetMedia[]> {
@@ -577,6 +654,10 @@ function injectStyle(): void {
       display: flex;
       align-items: center;
       justify-content: center;
+      position: relative;
+      z-index: 1;
+      isolation: isolate;
+      pointer-events: auto;
     }
 
     .picpick-x-inline-button {
@@ -592,12 +673,26 @@ function injectStyle(): void {
       align-items: center;
       justify-content: center;
       padding: 0;
-      transition: background-color 0.2s, color 0.2s;
+      position: relative;
+      z-index: 2;
+      pointer-events: auto;
+      touch-action: manipulation;
+      overflow: hidden;
+      transition: background-color 0.15s, color 0.15s;
+    }
+
+    .picpick-x-inline-button svg,
+    .picpick-x-inline-button svg * {
+      pointer-events: none;
     }
 
     .picpick-x-inline-button:hover {
       background-color: rgba(29, 155, 240, 0.1);
       color: rgb(29, 155, 240);
+    }
+
+    .picpick-x-inline-button:active {
+      transform: scale(0.88);
     }
 
     .picpick-x-inline-button[data-state="saved"] {
@@ -613,19 +708,80 @@ function injectStyle(): void {
       color: rgb(244, 33, 46);
     }
 
-    .picpick-x-inline-button svg {
+    .picpick-x-inline-button svg:not(.picpick-x-ring) {
       width: 18.75px;
       height: 18.75px;
       fill: currentColor;
     }
 
-    .picpick-x-inline-button[data-state="loading"] svg {
-      animation: picpick-x-spin 0.8s linear infinite;
+    /* ---- 円形プログレスリング ---- */
+    .picpick-x-ring {
+      width: 18.75px;
+      height: 18.75px;
+      display: block;
     }
 
-    @keyframes picpick-x-spin {
-      from { transform: rotate(0deg); }
+    .picpick-x-ring-arc {
+      transform-origin: center;
+      animation:
+        picpick-x-ring-rotate 1.4s linear infinite,
+        picpick-x-ring-dash 1.4s ease-in-out infinite;
+    }
+
+    @keyframes picpick-x-ring-rotate {
       to { transform: rotate(360deg); }
+    }
+
+    @keyframes picpick-x-ring-dash {
+      0%   { stroke-dashoffset: 62; }
+      50%  { stroke-dashoffset: 16; }
+      100% { stroke-dashoffset: 62; }
+    }
+
+    /* ---- クリック瞬間リップル ---- */
+    .picpick-x-inline-button::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: currentColor;
+      opacity: 0;
+      transform: scale(0.4);
+      pointer-events: none;
+    }
+
+    .picpick-x-inline-button.picpick-x-ripple::after {
+      animation: picpick-x-ripple 300ms ease-out;
+    }
+
+    @keyframes picpick-x-ripple {
+      0%   { opacity: 0.22; transform: scale(0.4); }
+      100% { opacity: 0;    transform: scale(1.1); }
+    }
+
+    /* ---- 保存完了パーティクル ---- */
+    .picpick-x-particle {
+      position: fixed;
+      width: 4px;
+      height: 4px;
+      margin: -2px 0 0 -2px;
+      border-radius: 9999px;
+      background: rgb(0, 186, 124);
+      opacity: 1;
+      will-change: transform, opacity;
+      animation: picpick-x-particle-burst 400ms ease-out forwards;
+    }
+
+    @keyframes picpick-x-particle-burst {
+      0%   { transform: translate(0, 0) scale(1); opacity: 1; }
+      100% { transform: translate(var(--dx), var(--dy)) scale(0.4); opacity: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .picpick-x-ring-arc { animation: picpick-x-ring-rotate 1.4s linear infinite; }
+      .picpick-x-particle { display: none; }
+      .picpick-x-inline-button.picpick-x-ripple::after { animation: none; }
+      .picpick-x-inline-button:active { transform: none; }
     }
   `;
   document.documentElement.appendChild(style);
@@ -637,7 +793,11 @@ function getIconSvg(state: ButtonState): string {
   }
 
   if (state === 'loading') {
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2Z"/></svg>';
+    // 円周 = 2π×10.4 ≈ 65.3。rotate+dashoffset二重アニメで「進行中感」
+    return '<svg viewBox="0 0 24 24" class="picpick-x-ring" aria-hidden="true">'
+      + '<circle cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-opacity="0.2"/>'
+      + '<circle class="picpick-x-ring-arc" cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="65.3"/>'
+      + '</svg>';
   }
 
   if (state === 'error') {
