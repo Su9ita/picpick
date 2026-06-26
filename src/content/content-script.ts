@@ -6,6 +6,7 @@ import { ImageInfo } from '../types/image-info';
 import { initOverlay } from './overlay';
 import { initXInlineSave } from './x-inline-save';
 import { initCreatorBatch } from './creator-batch';
+import { initPatreonBatch } from './patreon-batch';
 
 function initContentFeatures(): void {
   initOverlay();
@@ -13,6 +14,9 @@ function initContentFeatures(): void {
   // FANBOX ではクリエイター一括保存UIも有効化
   if (window.location.hostname.endsWith('fanbox.cc')) {
     initCreatorBatch();
+  }
+  if (window.location.hostname.endsWith('patreon.com')) {
+    initPatreonBatch();
   }
 }
 

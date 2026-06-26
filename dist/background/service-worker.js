@@ -536,6 +536,7 @@ const DEFAULT_SETTINGS = {
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
     includeDateInFilename: true, // デフォルトで日付を含める
+    xInlineDatePrefix: false, // Xインラインボタンの日付強制付与はデフォルトOFF
     advancedImageFiltersEnabled: true,
     aspectRatioFilterEnabled: true,
     minAspectRatio: 0.35,
@@ -605,6 +606,12 @@ function applyDateToTemplate(template, includeDateInFilename) {
     if (template.startsWith('{date}'))
         return template;
     return `{date}_${template}`;
+}
+function applyDatePolicyToTemplate(template, includeDateInFilename, ruleId) {
+    if (ruleId === 'patreon' || ruleId === 'pixiv_fanbox') {
+        return applyDateToTemplate(template, true);
+    }
+    return applyDateToTemplate(template, includeDateInFilename);
 }
 // ベースプレフィックスから次の連番を取得（ダウンロード履歴を検索）
 async function findNextIndex(basePrefix, _downloadFolder) {
@@ -1080,7 +1087,7 @@ async function handleDownload(message) {
         let basePrefix;
         let filename;
         const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
-        const template = applyDateToTemplate(selectedFilenamePreset.template, settings.includeDateInFilename !== false);
+        const template = applyDatePolicyToTemplate(selectedFilenamePreset.template, settings.includeDateInFilename !== false, activeRuleId);
         basePrefix = generateBasePrefix(template, image, customName || '');
         const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);
         filename = generateFilename(template, image, nextIndex, customName || '');

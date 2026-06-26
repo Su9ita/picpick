@@ -5,7 +5,7 @@ import { autoScrollToLoadAll } from '../utils/auto-scroller';
 import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
 import { getDefaultDownloadFolderLabel, getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
-import { generateFilename, applyDateToTemplate } from '../utils/filename-template';
+import { generateFilename, applyDatePolicyToTemplate } from '../utils/filename-template';
 import { applyIconGhostState, toggleIconGhostState } from './icon-ghost';
 
 let overlayContainer: HTMLDivElement | null = null;
@@ -1136,7 +1136,7 @@ function updateOverlayFilenamePreview(): void {
   const ruleId = currentSettings.activeRuleId || 'generic';
   const preset = getSelectedFilenamePreset(currentSettings, ruleId);
   const includeDate = includeDateCheckbox ? includeDateCheckbox.checked : (currentSettings.includeDateInFilename !== false);
-  const template = applyDateToTemplate(preset.template, includeDate);
+  const template = applyDatePolicyToTemplate(preset.template, includeDate, ruleId);
   const previewImage = scannedImages[0] || createPreviewImageInfo();
   previewEl.textContent = generateFilename(template, previewImage, 1, name);
 }
@@ -1193,8 +1193,9 @@ function getFilenamePresetDisplayLabel(label: string, template: string): string 
 function getFilenamePresetPreview(template: string): string {
   const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
   const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
+  const ruleId = currentSettings.activeRuleId || 'generic';
   const includeDate = includeDateCheckbox ? includeDateCheckbox.checked : (currentSettings.includeDateInFilename !== false);
-  const resolvedTemplate = applyDateToTemplate(template, includeDate);
+  const resolvedTemplate = applyDatePolicyToTemplate(template, includeDate, ruleId);
   const previewImage = scannedImages[0] || createPreviewImageInfo();
   const customName = customNameInput?.value.trim() || 'name';
   return generateFilename(resolvedTemplate, previewImage, 1, customName);

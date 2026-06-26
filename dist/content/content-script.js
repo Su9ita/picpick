@@ -1973,6 +1973,7 @@ const DEFAULT_SETTINGS = {
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
     includeDateInFilename: true, // デフォルトで日付を含める
+    xInlineDatePrefix: false, // Xインラインボタンの日付強制付与はデフォルトOFF
     advancedImageFiltersEnabled: true,
     aspectRatioFilterEnabled: true,
     minAspectRatio: 0.35,
@@ -2280,6 +2281,12 @@ function applyDateToTemplate(template, includeDateInFilename) {
         return template;
     return `{date}_${template}`;
 }
+function applyDatePolicyToTemplate(template, includeDateInFilename, ruleId) {
+    if (ruleId === 'patreon' || ruleId === 'pixiv_fanbox') {
+        return applyDateToTemplate(template, true);
+    }
+    return applyDateToTemplate(template, includeDateInFilename);
+}
 // ベースプレフィックスから次の連番を取得（ダウンロード履歴を検索）
 async function findNextIndex(basePrefix, _downloadFolder) {
     return new Promise((resolve) => {
@@ -2468,6 +2475,7 @@ let iconGhosted = false;
 function applyIconGhostState() {
     document.getElementById('picpick-btn')?.classList.toggle('picpick-ghosted', iconGhosted);
     document.getElementById('picpick-batch-btn')?.classList.toggle('pb-ghosted', iconGhosted);
+    document.getElementById('picpick-patreon-batch-btn')?.classList.toggle('pb-ghosted', iconGhosted);
 }
 function toggleIconGhostState() {
     iconGhosted = !iconGhosted;
@@ -3552,7 +3560,7 @@ function updateOverlayFilenamePreview() {
     const ruleId = currentSettings.activeRuleId || 'generic';
     const preset = getSelectedFilenamePreset(currentSettings, ruleId);
     const includeDate = includeDateCheckbox ? includeDateCheckbox.checked : (currentSettings.includeDateInFilename !== false);
-    const template = applyDateToTemplate(preset.template, includeDate);
+    const template = applyDatePolicyToTemplate(preset.template, includeDate, ruleId);
     const previewImage = scannedImages[0] || createPreviewImageInfo();
     previewEl.textContent = generateFilename(template, previewImage, 1, name);
 }
@@ -3603,8 +3611,9 @@ function getFilenamePresetDisplayLabel(label, template) {
 function getFilenamePresetPreview(template) {
     const customNameInput = document.getElementById('picpick-custom-name');
     const includeDateCheckbox = document.getElementById('picpick-include-date');
+    const ruleId = currentSettings.activeRuleId || 'generic';
     const includeDate = includeDateCheckbox ? includeDateCheckbox.checked : (currentSettings.includeDateInFilename !== false);
-    const resolvedTemplate = applyDateToTemplate(template, includeDate);
+    const resolvedTemplate = applyDatePolicyToTemplate(template, includeDate, ruleId);
     const previewImage = scannedImages[0] || createPreviewImageInfo();
     const customName = customNameInput?.value.trim() || 'name';
     return generateFilename(resolvedTemplate, previewImage, 1, customName);
@@ -4004,6 +4013,7 @@ let downloadedKeys = new Set();
 let cachedDownloadSettings = null;
 let pendingSettingsRequest = null;
 const activeDownloadKeys = new Set();
+const articleStateMap = new Map();
 async function initXInlineSave() {
     if (!isXHost(location.hostname))
         return;
@@ -4058,6 +4068,11 @@ function findActionBar(article) {
         || null;
 }
 function addSaveButton(article, actionBar) {
+    const existing = actionBar.querySelector('.picpick-x-inline-button');
+    if (existing) {
+        restoreButtonState(article, existing);
+        return;
+    }
     const wrapper = document.createElement('div');
     wrapper.className = 'picpick-x-inline-slot';
     const button = document.createElement('button');
@@ -4066,28 +4081,59 @@ function addSaveButton(article, actionBar) {
     button.setAttribute('aria-label', 'Picpickで画像を保存');
     button.title = 'Picpickで画像を保存';
     button.innerHTML = getIconSvg('ready');
-    button.addEventListener('click', (event) => {
+    // pointerdown で起動：click は pointerup 成立まで待つためXのレイヤー変動で不成立になる
+    button.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0)
+            return;
         event.preventDefault();
         event.stopPropagation();
+        spawnRipple(button);
         handleInlineDownload(article, button).catch((error) => {
             setButtonError(button, getErrorMessage(error));
             window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
         });
     });
+    // Xのポスト遷移へのバブルを阻止（click自体は処理しない）
+    button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+    });
     wrapper.appendChild(button);
     actionBar.appendChild(wrapper);
-    updateButtonStateForArticle(article);
+    restoreButtonState(article, button);
+}
+function restoreButtonState(article, button) {
+    const key = getArticleDownloadKey(article);
+    if (activeDownloadKeys.has(key)) {
+        setButtonState(button, 'loading', true);
+        return;
+    }
+    const saved = articleStateMap.get(key);
+    if (saved) {
+        if (saved.count != null)
+            button.dataset.count = String(saved.count);
+        setButtonState(button, saved.state, true);
+    }
+    else {
+        updateButtonStateForArticle(article);
+    }
+}
+function nextPaint() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 async function handleInlineDownload(article, button) {
     if (button.dataset.state === 'loading')
         return;
     const downloadKey = getArticleDownloadKey(article);
     if (activeDownloadKeys.has(downloadKey)) {
-        setButtonState(button, 'loading');
+        setButtonState(button, 'loading', true);
         return;
     }
     activeDownloadKeys.add(downloadKey);
-    setButtonState(button, 'loading');
+    articleStateMap.set(downloadKey, { state: 'loading' });
+    setButtonState(button, 'loading', true);
+    // ローディングリングを確実に1フレーム描画してから重いDOM走査へ
+    await nextPaint();
     try {
         const media = await extractDownloadMediaFromArticleWithRetry(article);
         if (media.length === 0) {
@@ -4111,9 +4157,11 @@ async function handleInlineDownload(article, button) {
         }
         await saveDownloadedKeys(downloadedKeys);
         button.dataset.count = String(media.length);
+        articleStateMap.set(downloadKey, { state: 'saved', count: media.length });
         setButtonState(button, 'saved');
     }
     catch (error) {
+        articleStateMap.set(downloadKey, { state: 'error' });
         setButtonError(button, getErrorMessage(error));
         window.setTimeout(() => updateButtonStateForArticle(article), ERROR_RESET_MS);
     }
@@ -4135,14 +4183,17 @@ function updateButtonStateForArticle(article) {
         setButtonState(button, 'ready');
     }
 }
-function setButtonState(button, state) {
+function setButtonState(button, state, skipParticles = false) {
+    const prev = button.dataset.state;
     button.dataset.state = state;
     delete button.dataset.error;
-    button.disabled = state === 'loading';
+    // disabled は使わない：pointerdown はdisabled状態でも効くが、UX/アクセシビリティ上不要
     button.innerHTML = getIconSvg(state);
     if (state === 'saved') {
         button.setAttribute('aria-label', 'Picpickで保存済み');
         button.title = `保存済み - クリックで再保存 (${button.dataset.count || '?'}件)`;
+        if (!skipParticles && prev !== 'saved')
+            spawnSaveParticles(button);
     }
     else if (state === 'loading') {
         button.setAttribute('aria-label', 'Picpickで保存中');
@@ -4422,6 +4473,7 @@ async function getDownloadSettings() {
             minWidth: 0,
             minHeight: 0,
             selectedPreset: '',
+            includeDateInFilename: true, // インラインボタン保存では設定値によらず日付を強制付与
         });
         cachedDownloadSettings = {
             settings: normalized,
@@ -4449,6 +4501,33 @@ function getErrorMessage(error) {
 }
 function x_inline_save_sleep(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+function spawnSaveParticles(button) {
+    const rect = button.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const COUNT = 5;
+    const DISTANCE = 18;
+    const layer = document.createElement('div');
+    layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+    for (let i = 0; i < COUNT; i++) {
+        const rad = (Math.PI * 2 * i) / COUNT;
+        const dot = document.createElement('span');
+        dot.className = 'picpick-x-particle';
+        dot.style.left = `${cx}px`;
+        dot.style.top = `${cy}px`;
+        dot.style.setProperty('--dx', `${(Math.cos(rad) * DISTANCE).toFixed(1)}px`);
+        dot.style.setProperty('--dy', `${(Math.sin(rad) * DISTANCE).toFixed(1)}px`);
+        layer.appendChild(dot);
+    }
+    document.body.appendChild(layer);
+    window.setTimeout(() => layer.remove(), 480);
+}
+function spawnRipple(button) {
+    button.classList.remove('picpick-x-ripple');
+    void button.offsetWidth;
+    button.classList.add('picpick-x-ripple');
+    window.setTimeout(() => button.classList.remove('picpick-x-ripple'), 300);
 }
 async function sendXTweetMediaMessage(postId) {
     return new Promise((resolve, reject) => {
@@ -4490,6 +4569,10 @@ function injectStyle() {
       display: flex;
       align-items: center;
       justify-content: center;
+      position: relative;
+      z-index: 1;
+      isolation: isolate;
+      pointer-events: auto;
     }
 
     .picpick-x-inline-button {
@@ -4505,12 +4588,26 @@ function injectStyle() {
       align-items: center;
       justify-content: center;
       padding: 0;
-      transition: background-color 0.2s, color 0.2s;
+      position: relative;
+      z-index: 2;
+      pointer-events: auto;
+      touch-action: manipulation;
+      overflow: hidden;
+      transition: background-color 0.15s, color 0.15s;
+    }
+
+    .picpick-x-inline-button svg,
+    .picpick-x-inline-button svg * {
+      pointer-events: none;
     }
 
     .picpick-x-inline-button:hover {
       background-color: rgba(29, 155, 240, 0.1);
       color: rgb(29, 155, 240);
+    }
+
+    .picpick-x-inline-button:active {
+      transform: scale(0.88);
     }
 
     .picpick-x-inline-button[data-state="saved"] {
@@ -4526,19 +4623,80 @@ function injectStyle() {
       color: rgb(244, 33, 46);
     }
 
-    .picpick-x-inline-button svg {
+    .picpick-x-inline-button svg:not(.picpick-x-ring) {
       width: 18.75px;
       height: 18.75px;
       fill: currentColor;
     }
 
-    .picpick-x-inline-button[data-state="loading"] svg {
-      animation: picpick-x-spin 0.8s linear infinite;
+    /* ---- 円形プログレスリング ---- */
+    .picpick-x-ring {
+      width: 18.75px;
+      height: 18.75px;
+      display: block;
     }
 
-    @keyframes picpick-x-spin {
-      from { transform: rotate(0deg); }
+    .picpick-x-ring-arc {
+      transform-origin: center;
+      animation:
+        picpick-x-ring-rotate 1.4s linear infinite,
+        picpick-x-ring-dash 1.4s ease-in-out infinite;
+    }
+
+    @keyframes picpick-x-ring-rotate {
       to { transform: rotate(360deg); }
+    }
+
+    @keyframes picpick-x-ring-dash {
+      0%   { stroke-dashoffset: 62; }
+      50%  { stroke-dashoffset: 16; }
+      100% { stroke-dashoffset: 62; }
+    }
+
+    /* ---- クリック瞬間リップル ---- */
+    .picpick-x-inline-button::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: currentColor;
+      opacity: 0;
+      transform: scale(0.4);
+      pointer-events: none;
+    }
+
+    .picpick-x-inline-button.picpick-x-ripple::after {
+      animation: picpick-x-ripple 300ms ease-out;
+    }
+
+    @keyframes picpick-x-ripple {
+      0%   { opacity: 0.22; transform: scale(0.4); }
+      100% { opacity: 0;    transform: scale(1.1); }
+    }
+
+    /* ---- 保存完了パーティクル ---- */
+    .picpick-x-particle {
+      position: fixed;
+      width: 4px;
+      height: 4px;
+      margin: -2px 0 0 -2px;
+      border-radius: 9999px;
+      background: rgb(0, 186, 124);
+      opacity: 1;
+      will-change: transform, opacity;
+      animation: picpick-x-particle-burst 400ms ease-out forwards;
+    }
+
+    @keyframes picpick-x-particle-burst {
+      0%   { transform: translate(0, 0) scale(1); opacity: 1; }
+      100% { transform: translate(var(--dx), var(--dy)) scale(0.4); opacity: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .picpick-x-ring-arc { animation: picpick-x-ring-rotate 1.4s linear infinite; }
+      .picpick-x-particle { display: none; }
+      .picpick-x-inline-button.picpick-x-ripple::after { animation: none; }
+      .picpick-x-inline-button:active { transform: none; }
     }
   `;
     document.documentElement.appendChild(style);
@@ -4548,7 +4706,11 @@ function getIconSvg(state) {
         return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.55 17.95 3.8 12.2l1.4-1.4 4.35 4.35L18.8 5.9l1.4 1.4-10.65 10.65Z"/></svg>';
     }
     if (state === 'loading') {
-        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2Z"/></svg>';
+        // 円周 = 2π×10.4 ≈ 65.3。rotate+dashoffset二重アニメで「進行中感」
+        return '<svg viewBox="0 0 24 24" class="picpick-x-ring" aria-hidden="true">'
+            + '<circle cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-opacity="0.2"/>'
+            + '<circle class="picpick-x-ring-arc" cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="65.3"/>'
+            + '</svg>';
     }
     if (state === 'error') {
         return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7h2v7h-2V7Zm0 9h2v2h-2v-2Zm1-14 10 18H2L12 2Z"/></svg>';
@@ -5177,7 +5339,915 @@ function creator_batch_sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+;// ./src/extractors/patreon-api.ts
+const PATREON_REFERRER = 'https://www.patreon.com/';
+let lastPatreonFetchError = '';
+async function fetchPatreonJson(url) {
+    lastPatreonFetchError = '';
+    try {
+        const response = await fetch(url, {
+            credentials: 'include',
+            cache: 'no-store',
+            headers: {
+                Accept: 'application/json, application/vnd.api+json',
+                'Content-Type': 'application/vnd.api+json',
+            },
+        });
+        if (!response.ok) {
+            lastPatreonFetchError = `HTTP ${response.status} ${response.statusText || ''}`.trim();
+            return null;
+        }
+        return (await response.json());
+    }
+    catch (error) {
+        lastPatreonFetchError = error.message || String(error);
+        return null;
+    }
+}
+async function fetchPatreonPostInfo(postId) {
+    if (!postId)
+        return null;
+    const json = await fetchPatreonJson(buildPatreonPostUrl(postId));
+    if (!json || Array.isArray(json.data) || !json.data)
+        return null;
+    return patreonResourceToPost(json.data, buildIncludedMap(json.included || []));
+}
+function buildPatreonPostUrl(postId) {
+    const url = new URL(`https://www.patreon.com/api/posts/${encodeURIComponent(postId)}`);
+    addPatreonPostParams(url.searchParams);
+    return url.toString();
+}
+function buildPatreonCreatorPostsUrl(campaignId, cursor = '', sort = '-published_at') {
+    const url = new URL('https://www.patreon.com/api/posts');
+    addPatreonPostParams(url.searchParams);
+    url.searchParams.set('filter[campaign_id]', campaignId);
+    url.searchParams.set('filter[contains_exclusive_posts]', 'true');
+    url.searchParams.set('filter[is_draft]', 'false');
+    url.searchParams.set('sort', sort);
+    if (cursor)
+        url.searchParams.set('page[cursor]', cursor);
+    return url.toString();
+}
+function patreonResponseToPosts(json) {
+    if (!Array.isArray(json.data))
+        return [];
+    const included = buildIncludedMap(json.included || []);
+    return json.data
+        .map((resource) => patreonResourceToPost(resource, included))
+        .filter((post) => post !== null);
+}
+function patreonItemsToImageInfo(items, metadata) {
+    return items.map((item, index) => ({
+        url: item.url,
+        originalUrl: item.url,
+        width: item.width ?? null,
+        height: item.height ?? null,
+        index: index + 1,
+        downloadReferrer: PATREON_REFERRER,
+        metadata: {
+            ...metadata,
+            originalFilename: item.fileName || filenameFromUrl(item.url),
+        },
+    }));
+}
+function buildPatreonMetadata(post) {
+    return {
+        creator: sanitizePatreonName(post.campaignName || post.userName || ''),
+        postId: post.id,
+        postTitle: sanitizePatreonName(post.title || 'untitled'),
+        postDate: post.publishedAt ? new Date(post.publishedAt) : null,
+        originalFilename: '',
+    };
+}
+function patreonImageId(item) {
+    if (item.id)
+        return `${item.source}:${item.id}`;
+    return `${item.source}:${filenameFromUrl(item.url).replace(/\.[^.]+$/, '') || item.url}`;
+}
+function sanitizePatreonName(name) {
+    return name
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 100);
+}
+function addPatreonPostParams(params) {
+    params.set('include', [
+        'campaign',
+        'attachments',
+        'attachments_media',
+        'images',
+        'media',
+        'user',
+    ].join(','));
+    params.set('fields[campaign]', 'name,url');
+    params.set('fields[post]', [
+        'content',
+        'current_user_can_view',
+        'image',
+        'published_at',
+        'title',
+        'url',
+        'patreon_url',
+        'thumbnail_url',
+    ].join(','));
+    params.set('fields[user]', 'full_name,url');
+    params.set('fields[media]', 'id,image_urls,download_url,metadata,file_name');
+    params.set('json-api-version', '1.0');
+}
+function buildIncludedMap(resources) {
+    const map = new Map();
+    for (const resource of resources) {
+        if (!resource.type || !resource.id)
+            continue;
+        map.set(`${resource.type}:${resource.id}`, resource);
+    }
+    return map;
+}
+function patreonResourceToPost(resource, included) {
+    if (!resource.id)
+        return null;
+    const attributes = resource.attributes || {};
+    const campaign = firstRelated(resource, included, 'campaign');
+    const user = firstRelated(resource, included, 'user');
+    const relationshipImages = [
+        ...relatedMedia(resource, included, 'images', 'image'),
+        ...relatedMedia(resource, included, 'media', 'image'),
+    ];
+    const images = [
+        ...relationshipImages,
+        ...(relationshipImages.length === 0 ? mediaFromPostImage(attributes) : []),
+        ...relatedMedia(resource, included, 'attachments_media', 'attachment'),
+        ...relatedMedia(resource, included, 'attachments', 'attachment'),
+        ...contentImages(getString(attributes.content)),
+    ];
+    return {
+        id: resource.id,
+        title: getString(attributes.title) || 'untitled',
+        publishedAt: getString(attributes.published_at),
+        currentUserCanView: getBoolean(attributes.current_user_can_view, true),
+        url: getString(attributes.url) || getString(attributes.patreon_url),
+        campaignName: getString(campaign?.attributes?.name),
+        userName: getString(user?.attributes?.full_name),
+        images: patreon_api_dedupeMedia(images),
+    };
+}
+function firstRelated(resource, included, key) {
+    const data = resource.relationships?.[key]?.data;
+    const ref = Array.isArray(data) ? data[0] : data;
+    if (!ref?.type || !ref.id)
+        return null;
+    return included.get(`${ref.type}:${ref.id}`) || null;
+}
+function relatedMedia(resource, included, key, source) {
+    const data = resource.relationships?.[key]?.data;
+    const refs = Array.isArray(data) ? data : data ? [data] : [];
+    const items = [];
+    for (const ref of refs) {
+        if (!ref.type || !ref.id)
+            continue;
+        const media = included.get(`${ref.type}:${ref.id}`);
+        const item = mediaResourceToItem(media, source);
+        if (item)
+            items.push(item);
+    }
+    return items;
+}
+function mediaResourceToItem(resource, source) {
+    const attributes = resource?.attributes || {};
+    const url = bestMediaUrl(attributes, source);
+    if (!url)
+        return null;
+    const metadata = getRecord(attributes.metadata);
+    const dimensions = getRecord(metadata?.dimensions);
+    const width = getNumber(metadata?.width)
+        ?? getNumber(metadata?.dimensions_width)
+        ?? getNumber(dimensions?.w)
+        ?? getNumber(dimensions?.width);
+    const height = getNumber(metadata?.height)
+        ?? getNumber(metadata?.dimensions_height)
+        ?? getNumber(dimensions?.h)
+        ?? getNumber(dimensions?.height);
+    return {
+        id: getString(attributes.id) || resource?.id || '',
+        url,
+        fileName: getString(attributes.file_name) || filenameFromUrl(url),
+        width,
+        height,
+        source,
+    };
+}
+function mediaFromPostImage(attributes) {
+    // post.image はカード/表示用の縮小画像であることが多い。
+    // 原寸は relationships.images/media の image_urls.original から取得する。
+    return [];
+}
+function bestMediaUrl(attributes, source) {
+    const imageUrls = getRecord(attributes.image_urls);
+    const originalUrl = imageUrls ? patreon_api_getOriginalImageUrl(imageUrls) : '';
+    if (originalUrl)
+        return originalUrl;
+    if (source === 'image' && imageUrls) {
+        return '';
+    }
+    const candidates = [
+        getString(attributes.download_url),
+        getString(attributes.url),
+    ];
+    return candidates.find((candidate) => candidate.includes('patreonusercontent.com')) || candidates.find(Boolean) || '';
+}
+function patreon_api_getOriginalImageUrl(imageUrls) {
+    const preferredKeys = ['original', 'full', 'source', 'download', 'default_original'];
+    for (const key of preferredKeys) {
+        const value = getString(imageUrls[key]);
+        if (value)
+            return value;
+    }
+    return '';
+}
+function contentImages(content) {
+    if (!content)
+        return [];
+    const doc = new DOMParser().parseFromString(content, 'text/html');
+    const items = [];
+    doc.querySelectorAll('img[src*="patreonusercontent.com"]').forEach((img, index) => {
+        const url = img.src;
+        items.push({
+            id: img.getAttribute('media_id') || `content:${index}:${url}`,
+            url,
+            fileName: filenameFromUrl(url),
+            width: img.naturalWidth || getDimension(img.getAttribute('width')),
+            height: img.naturalHeight || getDimension(img.getAttribute('height')),
+            source: 'content',
+        });
+    });
+    return items;
+}
+function patreon_api_dedupeMedia(items) {
+    const seen = new Set();
+    const result = [];
+    for (const item of items) {
+        const key = patreonMediaDedupeKey(item.url) || item.id;
+        if (!key || seen.has(key))
+            continue;
+        seen.add(key);
+        result.push(item);
+    }
+    return result;
+}
+function patreonMediaDedupeKey(url) {
+    try {
+        const urlObj = new URL(url);
+        const parts = urlObj.pathname.split('/').filter(Boolean);
+        const mediaRoot = parts.findIndex((part) => part === 'patreon-media');
+        if (mediaRoot >= 0 && parts.length >= mediaRoot + 7) {
+            const scope = parts[mediaRoot + 2];
+            const owner = parts[mediaRoot + 3];
+            const mediaHash = parts[mediaRoot + 4];
+            const filename = parts[parts.length - 1];
+            return `${urlObj.hostname}/${scope}/${owner}/${mediaHash}/${filename}`;
+        }
+        return `${urlObj.hostname}${urlObj.pathname}`;
+    }
+    catch {
+        return url.split('?')[0] || url;
+    }
+}
+function filenameFromUrl(url) {
+    try {
+        const pathName = new URL(url).pathname;
+        return pathName.split('/').pop() || 'image';
+    }
+    catch {
+        return 'image';
+    }
+}
+function getRecord(value) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value
+        : null;
+}
+function getString(value) {
+    return typeof value === 'string' ? value : '';
+}
+function getBoolean(value, fallback) {
+    return typeof value === 'boolean' ? value : fallback;
+}
+function getNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+function getDimension(value) {
+    if (!value)
+        return undefined;
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+;// ./src/crawlers/patreon-crawler.ts
+
+function detectPatreonCreatorSlug() {
+    const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
+    if (!path)
+        return null;
+    const parts = path.split('/');
+    const reserved = new Set([
+        'api',
+        'checkout',
+        'create',
+        'home',
+        'login',
+        'messages',
+        'posts',
+        'search',
+        'signup',
+        'user',
+    ]);
+    if ((parts[0] === 'c' || parts[0] === 'cw') && parts[1])
+        return parts[1];
+    if (parts[0] === 'profile' && parts[1] === 'creators')
+        return null;
+    if (!reserved.has(parts[0]))
+        return parts[0];
+    return null;
+}
+async function resolvePatreonCampaignId(input) {
+    const trimmed = input.trim();
+    if (!trimmed)
+        return null;
+    if (/^\d+$/.test(trimmed))
+        return trimmed;
+    if (trimmed.startsWith('id:') && /^\d+$/.test(trimmed.slice(3)))
+        return trimmed.slice(3);
+    const fromQuery = new URLSearchParams(window.location.search).get('c')
+        || new URLSearchParams(window.location.search).get('campaign_id');
+    if (fromQuery && /^\d+$/.test(fromQuery))
+        return fromQuery;
+    const fromVanityApi = await fetchCampaignIdByVanity(trimmed);
+    if (fromVanityApi)
+        return fromVanityApi;
+    const fromCurrentPage = extractCampaignIdFromDocument(document);
+    if (fromCurrentPage)
+        return fromCurrentPage;
+    try {
+        const response = await fetch(`https://www.patreon.com/${encodeURIComponent(trimmed)}`, {
+            credentials: 'include',
+            cache: 'no-store',
+        });
+        if (!response.ok)
+            return null;
+        const html = await response.text();
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        return extractCampaignIdFromDocument(parsed) || extractCampaignIdFromText(html);
+    }
+    catch {
+        return null;
+    }
+}
+async function fetchCampaignIdByVanity(vanity) {
+    try {
+        const url = new URL('https://www.patreon.com/api/campaigns');
+        url.searchParams.set('filter[vanity]', vanity);
+        url.searchParams.set('json-api-version', '1.0');
+        const json = await fetchPatreonJson(url.toString());
+        const data = json?.data;
+        if (Array.isArray(data)) {
+            const campaign = data.find((item) => item.type === 'campaign' && item.id);
+            return campaign?.id || null;
+        }
+        return data?.type === 'campaign'
+            ? data.id || null
+            : null;
+    }
+    catch {
+        return null;
+    }
+}
+async function enumeratePatreonCreatorPosts(campaignId, onProgress, requestDelayMs = 350) {
+    const posts = [];
+    const seen = new Set();
+    let nextUrl = buildPatreonCreatorPostsUrl(campaignId);
+    let guard = 0;
+    while (nextUrl && guard < 1000) {
+        const json = await fetchPatreonJson(nextUrl);
+        if (!json)
+            break;
+        for (const post of patreonResponseToPosts(json)) {
+            if (!seen.has(post.id)) {
+                seen.add(post.id);
+                posts.push(post);
+            }
+        }
+        onProgress?.(posts.length);
+        nextUrl = json.links?.next || null;
+        guard++;
+        if (nextUrl && requestDelayMs > 0)
+            await patreon_crawler_sleep(requestDelayMs);
+    }
+    return posts;
+}
+function extractCampaignIdFromDocument(doc) {
+    const nextData = doc.getElementById('__NEXT_DATA__')?.textContent;
+    if (nextData) {
+        const id = extractCampaignIdFromJsonText(nextData);
+        if (id)
+            return id;
+    }
+    for (const script of Array.from(doc.scripts)) {
+        const text = script.textContent || '';
+        if (!text.includes('campaign'))
+            continue;
+        const id = extractCampaignIdFromText(text);
+        if (id)
+            return id;
+    }
+    return null;
+}
+function extractCampaignIdFromJsonText(text) {
+    try {
+        const json = JSON.parse(text);
+        return findCampaignId(json);
+    }
+    catch {
+        return extractCampaignIdFromText(text);
+    }
+}
+function findCampaignId(value, depth = 0) {
+    if (!value || depth > 30)
+        return null;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const found = findCampaignId(item, depth + 1);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    if (typeof value !== 'object')
+        return null;
+    const record = value;
+    const campaign = record.campaign;
+    if (campaign && typeof campaign === 'object') {
+        const campaignRecord = campaign;
+        const directId = stringId(campaignRecord.id);
+        if (directId)
+            return directId;
+        const data = campaignRecord.data;
+        if (data && typeof data === 'object') {
+            const dataId = stringId(data.id);
+            if (dataId)
+                return dataId;
+        }
+    }
+    for (const [key, item] of Object.entries(record)) {
+        if ((key === 'campaign_id' || key === 'campaignId' || key === 'campaignID') && stringId(item)) {
+            return stringId(item);
+        }
+        if (key === 'type' && item === 'campaign' && stringId(record.id))
+            return stringId(record.id);
+    }
+    for (const item of Object.values(record)) {
+        const found = findCampaignId(item, depth + 1);
+        if (found)
+            return found;
+    }
+    return null;
+}
+function extractCampaignIdFromText(text) {
+    const patterns = [
+        /"campaign"\s*:\s*\{\s*"data"\s*:\s*\{\s*"id"\s*:\s*"(\d+)"/,
+        /\\"campaign\\"\s*:\s*\{\s*\\"data\\"\s*:\s*\{\s*\\"id\\"\s*:\s*\\"(\d+)/,
+        /"campaign_id"\s*:\s*"?(\d+)"?/,
+        /"campaignId"\s*:\s*"?(\d+)"?/,
+        /\/campaign\/(\d+)\//,
+        /\/creator\/(\d+)(?:[/.?]|%2F)/,
+        /campaign_id=(\d+)/,
+    ];
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match?.[1])
+            return match[1];
+    }
+    return null;
+}
+function stringId(value) {
+    if (typeof value === 'string' && /^\d+$/.test(value))
+        return value;
+    if (typeof value === 'number' && Number.isFinite(value))
+        return String(Math.trunc(value));
+    return null;
+}
+function patreon_crawler_sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+;// ./src/content/patreon-batch.ts
+
+
+
+
+
+
+
+let patreon_batch_panelEl = null;
+let patreon_batch_isRunning = false;
+let patreon_batch_abortRequested = false;
+function initPatreonBatch() {
+    if (!window.location.hostname.endsWith('patreon.com'))
+        return;
+    if (!document.body)
+        return;
+    patreon_batch_injectButton();
+}
+function patreon_batch_injectButton() {
+    if (document.getElementById('picpick-patreon-batch-root'))
+        return;
+    const root = document.createElement('div');
+    root.id = 'picpick-patreon-batch-root';
+    root.innerHTML = `
+    <style>
+      #picpick-patreon-batch-root {
+        position: fixed; top: 72px; left: 12px; z-index: 999998;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      #picpick-patreon-batch-btn {
+        width: 44px; height: 44px; border-radius: 50%;
+        background: linear-gradient(135deg, #ff424d 0%, #111827 100%);
+        border: none; cursor: pointer; color: #fff;
+        box-shadow: 0 4px 12px rgba(255,66,77,0.35);
+        display: flex; align-items: center; justify-content: center;
+        transition: transform .2s ease, box-shadow .2s ease, opacity .2s ease;
+      }
+      #picpick-patreon-batch-btn:hover { transform: scale(1.08); }
+      #picpick-patreon-batch-btn.pb-ghosted { opacity: .28; }
+      #picpick-patreon-batch-btn.pb-ghosted:hover { opacity: .45; }
+      #picpick-patreon-batch-btn svg { width: 22px; height: 22px; fill: #fff; }
+      #picpick-patreon-batch-panel {
+        position: absolute; top: 52px; left: 0;
+        width: 330px; max-width: 90vw;
+        background: #fff; border-radius: 12px; padding: 16px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2); display: none;
+        color: #1f2937;
+      }
+      #picpick-patreon-batch-panel.show { display: block; }
+      .ppb-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+      .ppb-row { margin-bottom: 10px; }
+      .ppb-row label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+      .ppb-row input[type="text"], .ppb-row input[type="number"], .ppb-row input[type="date"] {
+        width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;
+        font-size: 13px; box-sizing: border-box;
+      }
+      .ppb-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; }
+      .ppb-check input { width: auto; margin: 0; }
+      .ppb-grid2 { display: flex; gap: 8px; }
+      .ppb-grid2 > div { flex: 1; }
+      .ppb-filter-box { margin: 10px 0; padding: 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+      .ppb-buttons { display: flex; gap: 8px; margin-top: 12px; }
+      .ppb-btn { flex: 1; padding: 9px; border: none; border-radius: 8px; font-size: 13px;
+        font-weight: 500; cursor: pointer; }
+      .ppb-btn-go { background: linear-gradient(135deg,#ff424d,#111827); color: #fff; }
+      .ppb-btn-go:disabled { background: #9ca3af; cursor: not-allowed; }
+      .ppb-btn-stop { background: #fee2e2; color: #b91c1c; }
+      .ppb-progress { margin-top: 12px; font-size: 12px; color: #374151; min-height: 16px; }
+      .ppb-log { margin-top: 8px; max-height: 160px; overflow-y: auto; font-size: 11px;
+        color: #6b7280; background: #f9fafb; border-radius: 6px; padding: 8px; line-height: 1.5;
+        display: none; }
+      .ppb-log.show { display: block; }
+    </style>
+    <button id="picpick-patreon-batch-btn" title="Patreonクリエイターを一括保存">
+      <svg viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v5h-2V6H5v12h7v2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm2 4h10v2H7V8zm0 4h7v2H7v-2zm11 2v3h3v2h-3v3h-2v-3h-3v-2h3v-3h2z"/></svg>
+    </button>
+    <div id="picpick-patreon-batch-panel">
+      <div class="ppb-title">Patreon 一括保存</div>
+      <div class="ppb-row">
+        <label>creator / campaignId</label>
+        <input type="text" id="ppb-creator" placeholder="例: creatorname または 123456">
+      </div>
+      <div class="ppb-row ppb-grid2">
+        <div>
+          <label>最小横幅 (px)</label>
+          <input type="number" id="ppb-minwidth" min="0" value="800">
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <label class="ppb-check"><input type="checkbox" id="ppb-skip" checked> 未保存のみ</label>
+        </div>
+      </div>
+      <div class="ppb-row ppb-grid2">
+        <div>
+          <label>開始日（以降）</label>
+          <input type="date" id="ppb-from">
+        </div>
+        <div>
+          <label>終了日（以前）</label>
+          <input type="date" id="ppb-to">
+        </div>
+      </div>
+      <div class="ppb-filter-box">
+        <label class="ppb-check"><input type="checkbox" id="ppb-advanced-filters" checked> ルールフィルタ</label>
+        <div class="ppb-row ppb-grid2" style="margin-top:8px;margin-bottom:0;">
+          <div>
+            <label>横長上限</label>
+            <input type="number" id="ppb-max-aspect" min="0.1" step="0.1" value="3.2">
+          </div>
+          <div>
+            <label>pHash距離</label>
+            <input type="number" id="ppb-phash-threshold" min="0" max="32" step="1" value="6">
+          </div>
+        </div>
+      </div>
+      <div class="ppb-buttons">
+        <button class="ppb-btn ppb-btn-go" id="ppb-go">開始</button>
+        <button class="ppb-btn ppb-btn-stop" id="ppb-stop">中止</button>
+      </div>
+      <div class="ppb-progress" id="ppb-progress"></div>
+      <div class="ppb-log" id="ppb-log"></div>
+    </div>
+  `;
+    document.body.appendChild(root);
+    patreon_batch_panelEl = root.querySelector('#picpick-patreon-batch-panel');
+    const btn = root.querySelector('#picpick-patreon-batch-btn');
+    applyIconGhostState();
+    btn?.addEventListener('click', patreon_batch_togglePanel);
+    btn?.addEventListener('mousedown', (event) => {
+        if (event.button === 1)
+            event.preventDefault();
+    });
+    btn?.addEventListener('auxclick', (event) => {
+        if (event.button !== 1)
+            return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleIconGhostState();
+    });
+    root.querySelector('#ppb-go')?.addEventListener('click', () => void patreon_batch_runBatch());
+    root.querySelector('#ppb-stop')?.addEventListener('click', () => {
+        patreon_batch_abortRequested = true;
+        patreon_batch_setProgress('中止しています...');
+    });
+}
+function patreon_batch_togglePanel() {
+    if (!patreon_batch_panelEl)
+        return;
+    const show = !patreon_batch_panelEl.classList.contains('show');
+    patreon_batch_panelEl.classList.toggle('show', show);
+    if (show) {
+        const creatorInput = document.getElementById('ppb-creator');
+        if (creatorInput && !creatorInput.value) {
+            creatorInput.value = detectPatreonCreatorSlug() || '';
+        }
+    }
+}
+function patreon_batch_setProgress(text) {
+    const el = document.getElementById('ppb-progress');
+    if (el)
+        el.textContent = text;
+}
+function patreon_batch_log(text) {
+    const el = document.getElementById('ppb-log');
+    if (!el)
+        return;
+    el.classList.add('show');
+    const line = document.createElement('div');
+    line.textContent = text;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+}
+async function patreon_batch_runBatch() {
+    if (patreon_batch_isRunning)
+        return;
+    const creatorInput = document.getElementById('ppb-creator');
+    const minWidthInput = document.getElementById('ppb-minwidth');
+    const skipInput = document.getElementById('ppb-skip');
+    const fromInput = document.getElementById('ppb-from');
+    const toInput = document.getElementById('ppb-to');
+    const advancedFiltersInput = document.getElementById('ppb-advanced-filters');
+    const maxAspectInput = document.getElementById('ppb-max-aspect');
+    const pHashThresholdInput = document.getElementById('ppb-phash-threshold');
+    const goBtn = document.getElementById('ppb-go');
+    const creator = creatorInput?.value.trim() || detectPatreonCreatorSlug() || '';
+    if (!creator) {
+        patreon_batch_setProgress('creator / campaignId を入力してください');
+        return;
+    }
+    const minWidth = parseInt(minWidthInput?.value || '0', 10) || 0;
+    const skipSaved = skipInput?.checked !== false;
+    const fromTime = fromInput?.value ? new Date(fromInput.value).getTime() : null;
+    const toTime = toInput?.value ? new Date(`${toInput.value}T23:59:59`).getTime() : null;
+    patreon_batch_isRunning = true;
+    patreon_batch_abortRequested = false;
+    if (goBtn)
+        goBtn.disabled = true;
+    try {
+        const settings = await patreon_batch_getSettings();
+        settings.activeRuleId = 'patreon';
+        settings.minWidth = minWidth;
+        settings.advancedImageFiltersEnabled = advancedFiltersInput?.checked !== false;
+        settings.maxAspectRatio = parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio;
+        settings.pHashDistanceThreshold = parseInt(pHashThresholdInput?.value || '', 10) || DEFAULT_SETTINGS.pHashDistanceThreshold;
+        patreon_batch_setProgress('campaignId を解決中...');
+        const campaignId = await resolvePatreonCampaignId(creator);
+        if (!campaignId) {
+            patreon_batch_setProgress('campaignId を取得できませんでした');
+            patreon_batch_log('クリエイターページ上で実行するか、campaignId の数値を直接入力してください');
+            return;
+        }
+        patreon_batch_log(`campaignId: ${campaignId}`);
+        const savedKey = `patreon:${campaignId}`;
+        const savedIds = skipSaved ? await getSavedImageIds(savedKey) : new Set();
+        if (skipSaved)
+            patreon_batch_log(`保存済み: ${savedIds.size}枚（スキップ対象）`);
+        patreon_batch_setProgress('投稿一覧を取得中...');
+        let posts = await enumeratePatreonCreatorPosts(campaignId, (n) => patreon_batch_setProgress(`投稿一覧を取得中... ${n}件`));
+        posts = posts.filter((post) => patreon_batch_withinDateRange(post, fromTime, toTime));
+        if (posts.length === 0) {
+            patreon_batch_setProgress('対象の投稿がありません');
+            if (lastPatreonFetchError) {
+                patreon_batch_log(`API取得失敗: ${lastPatreonFetchError}`);
+            }
+            else {
+                patreon_batch_log('APIは応答しましたが投稿データが0件でした');
+            }
+            return;
+        }
+        const visibleCount = posts.filter((post) => post.currentUserCanView).length;
+        const imageCandidateCount = posts.reduce((sum, post) => sum + post.images.length, 0);
+        patreon_batch_log(`対象投稿: ${posts.length}件（閲覧可${visibleCount}, 閲覧不可フラグ${posts.length - visibleCount}, 画像候補${imageCandidateCount}）`);
+        let savedTotal = 0;
+        let restrictedPosts = 0;
+        for (let i = 0; i < posts.length; i++) {
+            if (patreon_batch_abortRequested) {
+                patreon_batch_setProgress(`中止しました（${savedTotal}枚保存）`);
+                return;
+            }
+            const post = posts[i];
+            patreon_batch_setProgress(`[${i + 1}/${posts.length}] ${post.title || post.id}`);
+            const allItems = post.images;
+            if (!post.currentUserCanView && allItems.length === 0) {
+                restrictedPosts++;
+                patreon_batch_log(`x 閲覧不可・画像候補なし: ${post.title || post.id}`);
+                continue;
+            }
+            if (!post.currentUserCanView) {
+                patreon_batch_log(`! 閲覧不可フラグあり・候補${allItems.length}枚を試行: ${post.title || post.id}`);
+            }
+            const metadata = buildPatreonMetadata(post);
+            let skippedSaved = 0;
+            let skippedSmall = 0;
+            const newItems = allItems.filter((item) => {
+                if (skipSaved && savedIds.has(patreonImageId(item))) {
+                    skippedSaved++;
+                    return false;
+                }
+                if (minWidth > 0 && item.width != null && item.width < minWidth) {
+                    skippedSmall++;
+                    return false;
+                }
+                return true;
+            });
+            if (newItems.length === 0) {
+                if (allItems.length > 0) {
+                    patreon_batch_log(`- ${post.title || post.id}: 候補0/${allItems.length}枚（保存済み${skippedSaved}, 小サイズ${skippedSmall}）`);
+                }
+                continue;
+            }
+            const images = patreonItemsToImageInfo(newItems, metadata);
+            const originalPairs = images.map((image, index) => ({ image, item: newItems[index] }));
+            const syncFilter = filterImages(images, settings);
+            const syncPassed = new Set(syncFilter.passed);
+            const syncPairs = originalPairs.filter((pair) => syncPassed.has(pair.image));
+            if (syncPairs.length === 0) {
+                patreon_batch_log(`- ${post.title || post.id}: ルール除外 ${syncFilter.filtered.length}/${newItems.length}枚`);
+                continue;
+            }
+            const prefetched = await patreon_batch_prefetchBlobs(syncPairs.map((pair) => pair.image));
+            const prefetchedPairs = prefetched.map((image, index) => ({ image, item: syncPairs[index].item }));
+            const pHashFilter = await filterNearDuplicateImages(prefetched, settings);
+            const pHashPassed = new Set(pHashFilter.passed);
+            const finalPairs = prefetchedPairs.filter((pair) => pHashPassed.has(pair.image));
+            if (finalPairs.length === 0) {
+                patreon_batch_log(`- ${post.title || post.id}: pHash除外 ${pHashFilter.filtered.length}/${syncPairs.length}枚`);
+                continue;
+            }
+            const result = await patreon_batch_sendDownload(finalPairs.map((pair) => pair.image), settings);
+            const succeeded = result.success ?? 0;
+            savedTotal += succeeded;
+            const ids = finalPairs.map((pair) => patreonImageId(pair.item));
+            await markImagesSaved(savedKey, post.id, ids);
+            ids.forEach((id) => savedIds.add(id));
+            const detail = [
+                `候補${newItems.length}/${allItems.length}`,
+                syncFilter.filtered.length > 0 ? `ルール除外${syncFilter.filtered.length}` : '',
+                pHashFilter.filtered.length > 0 ? `pHash除外${pHashFilter.filtered.length}` : '',
+            ].filter(Boolean).join(', ');
+            patreon_batch_log(`OK ${post.title || post.id}: ${succeeded}/${finalPairs.length}枚（${detail}）`);
+            await patreon_batch_sleep(500);
+        }
+        const note = restrictedPosts > 0 ? `（閲覧不可 ${restrictedPosts}件スキップ）` : '';
+        patreon_batch_setProgress(`完了: 合計 ${savedTotal}枚保存${note}`);
+    }
+    catch (error) {
+        patreon_batch_setProgress(`エラー: ${error.message}`);
+    }
+    finally {
+        patreon_batch_isRunning = false;
+        if (goBtn)
+            goBtn.disabled = false;
+    }
+}
+function patreon_batch_withinDateRange(post, from, to) {
+    if (from == null && to == null)
+        return true;
+    const t = post.publishedAt ? new Date(post.publishedAt).getTime() : NaN;
+    if (Number.isNaN(t))
+        return true;
+    if (from != null && t < from)
+        return false;
+    if (to != null && t > to)
+        return false;
+    return true;
+}
+async function patreon_batch_prefetchBlobs(images) {
+    const result = [...images];
+    for (let i = 0; i < result.length; i++) {
+        const img = result[i];
+        try {
+            const response = await fetch(img.url, {
+                credentials: 'include',
+                cache: 'no-store',
+                referrer: PATREON_REFERRER,
+                referrerPolicy: 'strict-origin-when-cross-origin',
+            });
+            if (!response.ok)
+                continue;
+            const blobData = await response.arrayBuffer();
+            const blobMimeType = response.headers.get('content-type') || 'image/jpeg';
+            if (patreon_batch_isValidImageResponse(blobMimeType, blobData)) {
+                result[i] = { ...img, blobData, blobMimeType, downloadReferrer: PATREON_REFERRER };
+            }
+        }
+        catch {
+            // service worker 側の URL ダウンロードにフォールバックする。
+        }
+    }
+    return result;
+}
+function patreon_batch_isValidImageResponse(contentType, buffer) {
+    if (contentType.toLowerCase().startsWith('image/'))
+        return true;
+    const bytes = new Uint8Array(buffer.slice(0, 12));
+    const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+    const isWebp = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+        bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+    return isJpeg || isPng || isGif || isWebp;
+}
+async function patreon_batch_sendDownload(images, settings) {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({
+                type: 'DOWNLOAD_IMAGES',
+                images,
+                settings,
+                saveAs: false,
+                waitForCompletion: true,
+                interDownloadDelayMs: 500,
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ error: chrome.runtime.lastError.message });
+                    return;
+                }
+                resolve(response || {});
+            });
+        }
+        catch (error) {
+            resolve({ error: error.message });
+        }
+    });
+}
+async function patreon_batch_getSettings() {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
+                if (chrome.runtime.lastError || !response || response.error) {
+                    resolve(normalizeSettings(DEFAULT_SETTINGS));
+                }
+                else {
+                    resolve(normalizeSettings(response));
+                }
+            });
+        }
+        catch {
+            resolve(normalizeSettings(DEFAULT_SETTINGS));
+        }
+    });
+}
+function patreon_batch_sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 ;// ./src/content/content-script.ts
+
 
 
 
@@ -5191,6 +6261,9 @@ function initContentFeatures() {
     // FANBOX ではクリエイター一括保存UIも有効化
     if (window.location.hostname.endsWith('fanbox.cc')) {
         initCreatorBatch();
+    }
+    if (window.location.hostname.endsWith('patreon.com')) {
+        initPatreonBatch();
     }
 }
 // ページ読み込み完了後に初期化

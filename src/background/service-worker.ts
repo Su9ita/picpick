@@ -1,6 +1,6 @@
 import { DownloadImagesMessage, XTweetMedia } from '../types/messages';
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
-import { generateFilename, generateBasePrefix, findNextIndex, applyDateToTemplate } from '../utils/filename-template';
+import { generateFilename, generateBasePrefix, findNextIndex, applyDatePolicyToTemplate } from '../utils/filename-template';
 import { getSelectedDownloadFolder, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 
 // メッセージリスナー
@@ -66,7 +66,11 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
     let filename: string;
 
     const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
-    const template = applyDateToTemplate(selectedFilenamePreset.template, settings.includeDateInFilename !== false);
+    const template = applyDatePolicyToTemplate(
+      selectedFilenamePreset.template,
+      settings.includeDateInFilename !== false,
+      activeRuleId
+    );
 
     basePrefix = generateBasePrefix(template, image, customName || '');
     const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);

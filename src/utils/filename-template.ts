@@ -7,6 +7,17 @@ export function applyDateToTemplate(template: string, includeDateInFilename: boo
   return `{date}_${template}`;
 }
 
+export function applyDatePolicyToTemplate(
+  template: string,
+  includeDateInFilename: boolean,
+  ruleId: string
+): string {
+  if (ruleId === 'patreon' || ruleId === 'pixiv_fanbox') {
+    return applyDateToTemplate(template, true);
+  }
+  return applyDateToTemplate(template, includeDateInFilename);
+}
+
 // ベースプレフィックスから次の連番を取得（ダウンロード履歴を検索）
 export async function findNextIndex(
   basePrefix: string,
