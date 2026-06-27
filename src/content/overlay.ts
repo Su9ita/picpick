@@ -154,24 +154,31 @@ function createOverlay(): void {
       }
       .picpick-dialog-content {
         background: white;
-        border-radius: 12px;
-        padding: 24px;
-        width: 460px;
+        border-radius: 10px;
+        padding: 18px;
+        width: 560px;
         max-width: 90vw;
-        max-height: min(760px, calc(100vh - 40px));
+        max-height: min(680px, calc(100vh - 32px));
         overflow-y: auto;
         box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      }
+      .picpick-dialog-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
       }
       .picpick-dialog-title {
         font-size: 18px;
         font-weight: 600;
-        margin-bottom: 16px;
+        margin-bottom: 4px;
         color: #1f2937;
       }
       .picpick-dialog-info {
         font-size: 14px;
         color: #4b5563;
-        margin-bottom: 16px;
+        margin-bottom: 0;
       }
       .picpick-dialog-info strong {
         color: #6366f1;
@@ -251,6 +258,10 @@ function createOverlay(): void {
       .picpick-dialog-buttons {
         display: flex;
         gap: 8px;
+        position: sticky;
+        bottom: -18px;
+        padding-top: 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0), #fff 28%);
       }
       .picpick-dialog-btn {
         flex: 1;
@@ -278,11 +289,12 @@ function createOverlay(): void {
         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
       }
       .picpick-dialog-btn-rescan {
-        width: 100%;
+        width: auto;
         background: #e0e7ff;
         color: #4f46e5;
-        margin-bottom: 8px;
+        margin-bottom: 0;
         flex: none;
+        padding: 8px 12px;
       }
       .picpick-dialog-btn-rescan:hover {
         background: #c7d2fe;
@@ -295,7 +307,20 @@ function createOverlay(): void {
 
       /* カスタム名モード */
       .picpick-naming-section {
-        margin-bottom: 16px;
+        margin-bottom: 12px;
+      }
+      .picpick-main-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .picpick-field-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: #374151;
+        margin-bottom: 4px;
       }
       .picpick-rule-tabs {
         display: grid;
@@ -408,8 +433,11 @@ function createOverlay(): void {
         font-family: monospace;
       }
       .picpick-include-date-row {
-        margin: 14px 0 16px;
-        padding: 10px 0;
+        margin: 0;
+        padding: 0;
+      }
+      .picpick-reset-index-row {
+        margin: 8px 0 0;
       }
       .picpick-include-date-label {
         display: flex;
@@ -419,14 +447,58 @@ function createOverlay(): void {
         color: #374151;
         cursor: pointer;
       }
-      .picpick-include-date-label input[type="checkbox"] {
+      .picpick-include-date-label input[type="checkbox"],
+      .picpick-reset-index-label input[type="checkbox"] {
         flex: 0 0 auto;
         width: auto;
         margin: 0;
         cursor: pointer;
       }
+      .picpick-reset-index-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #374151;
+        cursor: pointer;
+      }
+      .picpick-advanced-panel {
+        margin: 10px 0 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #fafafa;
+      }
+      .picpick-advanced-panel summary {
+        cursor: pointer;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        list-style: none;
+      }
+      .picpick-advanced-panel summary::-webkit-details-marker {
+        display: none;
+      }
+      .picpick-advanced-panel summary::after {
+        content: '+';
+        float: right;
+        color: #6b7280;
+      }
+      .picpick-advanced-panel[open] summary::after {
+        content: '-';
+      }
+      .picpick-advanced-body {
+        padding: 0 12px 12px;
+      }
+      .picpick-option-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin: 8px 0;
+      }
       .picpick-filter-section {
-        margin: 0 0 14px;
+        margin: 10px 0 0;
         padding: 10px;
         background: #f9fafb;
         border: 1px solid #e5e7eb;
@@ -477,12 +549,16 @@ function createOverlay(): void {
     </div>
     <div id="picpick-confirm-dialog">
       <div class="picpick-dialog-content">
-        <div class="picpick-dialog-title">画像を保存</div>
-        <div class="picpick-dialog-info">
-          <strong id="picpick-dialog-count">0</strong> 枚の画像が見つかりました
-          <span id="picpick-dialog-scanned" style="font-size: 12px; color: #9ca3af; margin-left: 8px;"></span>
+        <div class="picpick-dialog-header">
+          <div>
+            <div class="picpick-dialog-title">画像を保存</div>
+            <div class="picpick-dialog-info">
+              対象 <strong id="picpick-dialog-count">0</strong> 枚
+              <span id="picpick-dialog-scanned" style="font-size: 12px; color: #9ca3af; margin-left: 8px;"></span>
+            </div>
+          </div>
+          <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
         </div>
-        <div id="picpick-image-list" class="picpick-image-list" style="display: none;"></div>
 
         <!-- サイトルール選択 -->
         <div style="margin-bottom: 10px;">
@@ -492,18 +568,20 @@ function createOverlay(): void {
           </select>
         </div>
 
-        <div class="picpick-include-date-row">
-          <label class="picpick-include-date-label">
-            <input type="checkbox" id="picpick-include-date">
-            <span>日付をいれる</span>
-          </label>
-        </div>
-
         <!-- 保存名プリセット -->
         <div class="picpick-naming-section">
-          <div style="margin-bottom: 8px;">
-            <label style="display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 4px;">保存名プリセット</label>
-            <select id="picpick-filename-preset-select" class="picpick-preset-select"></select>
+          <div class="picpick-main-grid">
+            <div>
+              <label class="picpick-field-label">保存名</label>
+              <select id="picpick-filename-preset-select" class="picpick-preset-select"></select>
+            </div>
+            <div class="picpick-save-destination">
+              <label class="picpick-field-label">保存先</label>
+              <select id="picpick-save-destination-select" class="picpick-preset-select">
+                <option value="default">デフォルト</option>
+                <option value="choose">保存場所を選択</option>
+              </select>
+            </div>
           </div>
           <div id="picpick-custom-name-section" class="picpick-custom-name-section">
             <div class="picpick-custom-name-row">
@@ -514,39 +592,48 @@ function createOverlay(): void {
             保存結果: <span id="picpick-filename-preview">2026-04-08_name_01.jpg</span>
           </div>
         </div>
-        <select id="picpick-preset-select" class="picpick-preset-select">
-          <option value="">カスタム</option>
-        </select>
-        <div class="picpick-size-inputs">
-          <div class="picpick-size-input">
-            <label>最小横幅 (px)</label>
-            <input type="number" id="picpick-min-width" min="0" value="800">
-          </div>
-        </div>
-        <div class="picpick-filter-section">
-          <label class="picpick-filter-row">
-            <input type="checkbox" id="picpick-advanced-filters">
-            <span>ルールフィルタ</span>
-          </label>
-          <div class="picpick-filter-grid">
-            <div class="picpick-filter-field">
-              <label>横長上限</label>
-              <input type="number" id="picpick-max-aspect" min="0.1" step="0.1">
+
+        <details class="picpick-advanced-panel">
+          <summary>詳細設定</summary>
+          <div class="picpick-advanced-body">
+            <div class="picpick-option-row">
+              <label class="picpick-include-date-label">
+                <input type="checkbox" id="picpick-include-date">
+                <span>日付を付ける</span>
+              </label>
+              <label class="picpick-reset-index-label">
+                <input type="checkbox" id="picpick-reset-index">
+                <span>連番を 01 から開始</span>
+              </label>
             </div>
-            <div class="picpick-filter-field">
-              <label>pHash距離</label>
-              <input type="number" id="picpick-phash-threshold" min="0" max="32" step="1">
+            <select id="picpick-preset-select" class="picpick-preset-select">
+              <option value="">カスタム</option>
+            </select>
+            <div class="picpick-size-inputs">
+              <div class="picpick-size-input">
+                <label>最小横幅 (px)</label>
+                <input type="number" id="picpick-min-width" min="0" value="800">
+              </div>
             </div>
+            <div class="picpick-filter-section">
+              <label class="picpick-filter-row">
+                <input type="checkbox" id="picpick-advanced-filters">
+                <span>自動フィルタを使う</span>
+              </label>
+              <div class="picpick-filter-grid">
+                <div class="picpick-filter-field">
+                  <label>横長画像の除外</label>
+                  <input type="number" id="picpick-max-aspect" min="0.1" step="0.1">
+                </div>
+                <div class="picpick-filter-field">
+                  <label>近似重複の強さ</label>
+                  <input type="number" id="picpick-phash-threshold" min="0" max="32" step="1">
+                </div>
+              </div>
+            </div>
+            <div id="picpick-image-list" class="picpick-image-list" style="display: none;"></div>
           </div>
-        </div>
-        <div class="picpick-save-destination">
-          <label>保存先</label>
-          <select id="picpick-save-destination-select" class="picpick-preset-select">
-            <option value="default">デフォルト</option>
-            <option value="choose">保存場所を選択</option>
-          </select>
-        </div>
-        <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
+        </details>
         
         <div class="picpick-dialog-buttons">
           <button class="picpick-dialog-btn picpick-dialog-btn-cancel" id="picpick-cancel-btn">キャンセル</button>
@@ -912,6 +999,10 @@ function showConfirmDialog(): void {
   const includeDateCheckbox = document.getElementById('picpick-include-date') as HTMLInputElement;
   if (includeDateCheckbox) {
     includeDateCheckbox.checked = currentSettings.includeDateInFilename !== false;
+  }
+  const resetIndexCheckbox = document.getElementById('picpick-reset-index') as HTMLInputElement;
+  if (resetIndexCheckbox) {
+    resetIndexCheckbox.checked = false;
   }
 
   updateFilteredCount();
@@ -1366,6 +1457,8 @@ async function handleConfirmDownload(): Promise<void> {
 
     const customNameInput = document.getElementById('picpick-custom-name') as HTMLInputElement;
     const customName = customNameInput?.value.trim() || undefined;
+    const resetIndexCheckbox = document.getElementById('picpick-reset-index') as HTMLInputElement;
+    const resetIndex = resetIndexCheckbox?.checked === true;
 
     const sendMsgPromise = new Promise<{ error?: string; success?: number; failed?: number }>((resolve, reject) => {
       try {
@@ -1375,6 +1468,7 @@ async function handleConfirmDownload(): Promise<void> {
           settings,
           customName,
           saveAs: false,
+          resetIndex,
           waitForCompletion: false,
         }, (response) => {
           if (chrome.runtime.lastError) {

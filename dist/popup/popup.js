@@ -536,6 +536,7 @@ const DEFAULT_SETTINGS = {
     skipDuplicates: true,
     overlayEnabled: true, // デフォルトでオーバーレイを表示
     includeDateInFilename: true, // デフォルトで日付を含める
+    xInlineDatePrefix: false, // Xインラインボタンの日付強制付与はデフォルトOFF
     advancedImageFiltersEnabled: true,
     aspectRatioFilterEnabled: true,
     minAspectRatio: 0.35,
@@ -854,6 +855,7 @@ const defaultDownloadFolderPathInput = document.getElementById('default-download
 const newDownloadFolderPresetInput = document.getElementById('new-download-folder-preset');
 const addDownloadFolderPresetBtn = document.getElementById('add-download-folder-preset');
 const scanScrollEnabledCheckbox = document.getElementById('scan-scroll-enabled');
+const xInlineDatePrefixCheckbox = document.getElementById('x-inline-date-prefix');
 const saveGlobalSettingsBtn = document.getElementById('save-global-settings');
 const overlayEnabledCheckbox = document.getElementById('overlay-enabled');
 const sizePresetList = document.getElementById('size-preset-list');
@@ -1079,6 +1081,7 @@ function initGlobalSettings() {
     saveGlobalSettingsBtn?.addEventListener('click', async () => {
         updateDefaultDownloadFolderSettings();
         currentSettings.scanScrollEnabled = scanScrollEnabledCheckbox?.checked === true;
+        currentSettings.xInlineDatePrefix = xInlineDatePrefixCheckbox?.checked === true;
         await saveSettings();
         showStatus('設定を保存しました');
     });
@@ -1106,6 +1109,8 @@ function renderGlobalSettings() {
     }
     if (scanScrollEnabledCheckbox)
         scanScrollEnabledCheckbox.checked = currentSettings.scanScrollEnabled === true;
+    if (xInlineDatePrefixCheckbox)
+        xInlineDatePrefixCheckbox.checked = currentSettings.xInlineDatePrefix === true;
     if (overlayEnabledCheckbox)
         overlayEnabledCheckbox.checked = currentSettings.overlayEnabled !== false;
 }

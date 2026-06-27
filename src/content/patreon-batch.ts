@@ -1,6 +1,6 @@
 import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { ImageInfo } from '../types/image-info';
-import { normalizeSettings } from '../utils/settings-normalizer';
+import { getDefaultDownloadFolderLabel, normalizeSettings } from '../utils/settings-normalizer';
 import {
   buildPatreonMetadata,
   lastPatreonFetchError,
@@ -70,7 +70,17 @@ function injectButton(): void {
       .ppb-check input { width: auto; margin: 0; }
       .ppb-grid2 { display: flex; gap: 8px; }
       .ppb-grid2 > div { flex: 1; }
+      .ppb-segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
+      .ppb-seg { padding: 7px 4px; border: 1px solid #d1d5db; background: #fff; border-radius: 7px; font-size: 12px; color: #374151; cursor: pointer; }
+      .ppb-seg.active { border-color: #ff424d; background: #fff1f2; color: #be123c; font-weight: 600; }
+      .ppb-custom-range { display: none; }
+      .ppb-custom-range.show { display: flex; }
+      .ppb-select { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; box-sizing: border-box; }
       .ppb-filter-box { margin: 10px 0; padding: 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+      .ppb-details { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fafafa; }
+      .ppb-details summary { cursor: pointer; padding: 9px 10px; font-size: 13px; font-weight: 600; color: #374151; list-style: none; }
+      .ppb-details summary::-webkit-details-marker { display: none; }
+      .ppb-details-body { padding: 0 10px 10px; }
       .ppb-buttons { display: flex; gap: 8px; margin-top: 12px; }
       .ppb-btn { flex: 1; padding: 9px; border: none; border-radius: 8px; font-size: 13px;
         font-weight: 500; cursor: pointer; }
@@ -92,39 +102,55 @@ function injectButton(): void {
         <label>creator / campaignId</label>
         <input type="text" id="ppb-creator" placeholder="例: creatorname または 123456">
       </div>
+      <div class="ppb-segmented" role="group" aria-label="保存期間">
+        <button type="button" class="ppb-seg active" data-range="all">全期間</button>
+        <button type="button" class="ppb-seg" data-range="week">7日</button>
+        <button type="button" class="ppb-seg" data-range="month">30日</button>
+        <button type="button" class="ppb-seg" data-range="custom">指定</button>
+      </div>
+      <div class="ppb-row ppb-grid2 ppb-custom-range" id="ppb-custom-range">
+        <div>
+          <label>開始日</label>
+          <input type="date" id="ppb-from">
+        </div>
+        <div>
+          <label>終了日</label>
+          <input type="date" id="ppb-to">
+        </div>
+      </div>
       <div class="ppb-row ppb-grid2">
         <div>
-          <label>最小横幅 (px)</label>
-          <input type="number" id="ppb-minwidth" min="0" value="800">
+          <label>保存先</label>
+          <select id="ppb-destination" class="ppb-select"></select>
         </div>
         <div>
           <label>&nbsp;</label>
           <label class="ppb-check"><input type="checkbox" id="ppb-skip" checked> 未保存のみ</label>
         </div>
       </div>
-      <div class="ppb-row ppb-grid2">
-        <div>
-          <label>開始日（以降）</label>
-          <input type="date" id="ppb-from">
-        </div>
-        <div>
-          <label>終了日（以前）</label>
-          <input type="date" id="ppb-to">
-        </div>
-      </div>
-      <div class="ppb-filter-box">
-        <label class="ppb-check"><input type="checkbox" id="ppb-advanced-filters" checked> ルールフィルタ</label>
-        <div class="ppb-row ppb-grid2" style="margin-top:8px;margin-bottom:0;">
-          <div>
-            <label>横長上限</label>
-            <input type="number" id="ppb-max-aspect" min="0.1" step="0.1" value="3.2">
+      <details class="ppb-details">
+        <summary>詳細設定</summary>
+        <div class="ppb-details-body">
+          <div class="ppb-row">
+            <label>最小横幅 (px)</label>
+            <input type="number" id="ppb-minwidth" min="0" value="800">
           </div>
-          <div>
-            <label>pHash距離</label>
-            <input type="number" id="ppb-phash-threshold" min="0" max="32" step="1" value="6">
+          <label class="ppb-check"><input type="checkbox" id="ppb-reset-index"> 連番を 01 から開始</label>
+          <div class="ppb-filter-box">
+            <label class="ppb-check"><input type="checkbox" id="ppb-advanced-filters" checked> 自動フィルタを使う</label>
+            <div class="ppb-row ppb-grid2" style="margin-top:8px;margin-bottom:0;">
+              <div>
+                <label>横長画像の除外</label>
+                <input type="number" id="ppb-max-aspect" min="0.1" step="0.1" value="3.2">
+              </div>
+              <div>
+                <label>近似重複の強さ</label>
+                <input type="number" id="ppb-phash-threshold" min="0" max="32" step="1" value="6">
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </details>
       <div class="ppb-buttons">
         <button class="ppb-btn ppb-btn-go" id="ppb-go">開始</button>
         <button class="ppb-btn ppb-btn-stop" id="ppb-stop">中止</button>
@@ -153,6 +179,10 @@ function injectButton(): void {
     abortRequested = true;
     setProgress('中止しています...');
   });
+  root.querySelectorAll<HTMLButtonElement>('.ppb-seg').forEach((button) => {
+    button.addEventListener('click', () => applyDateRange(button.dataset.range || 'all'));
+  });
+  void hydrateDestinationSelect();
 }
 
 function togglePanel(): void {
@@ -164,7 +194,65 @@ function togglePanel(): void {
     if (creatorInput && !creatorInput.value) {
       creatorInput.value = detectPatreonCreatorSlug() || '';
     }
+    void hydrateDestinationSelect();
   }
+}
+
+async function hydrateDestinationSelect(): Promise<void> {
+  const select = document.getElementById('ppb-destination') as HTMLSelectElement;
+  if (!select) return;
+  const settings = await getSettings();
+  select.innerHTML = '';
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = 'downloads';
+  defaultOption.textContent = settings.defaultDownloadFolderPath
+    ? `${getDefaultDownloadFolderLabel(settings)} (${settings.defaultDownloadFolderPath})`
+    : getDefaultDownloadFolderLabel(settings);
+  select.appendChild(defaultOption);
+
+  for (const preset of settings.downloadFolderPresets || []) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = preset.label || preset.folder;
+    select.appendChild(option);
+  }
+
+  select.value = Array.from(select.options).some((option) => option.value === settings.selectedDownloadFolderPresetId)
+    ? settings.selectedDownloadFolderPresetId || 'downloads'
+    : 'downloads';
+}
+
+function applyDateRange(range: string): void {
+  const fromInput = document.getElementById('ppb-from') as HTMLInputElement;
+  const toInput = document.getElementById('ppb-to') as HTMLInputElement;
+  const customRange = document.getElementById('ppb-custom-range');
+  document.querySelectorAll<HTMLButtonElement>('.ppb-seg').forEach((button) => {
+    button.classList.toggle('active', button.dataset.range === range);
+  });
+
+  const today = new Date();
+  const to = formatDateInput(today);
+  if (range === 'week' || range === 'month') {
+    const from = new Date(today);
+    from.setDate(today.getDate() - (range === 'week' ? 7 : 30));
+    fromInput.value = formatDateInput(from);
+    toInput.value = to;
+    customRange?.classList.remove('show');
+  } else if (range === 'custom') {
+    customRange?.classList.add('show');
+  } else {
+    fromInput.value = '';
+    toInput.value = '';
+    customRange?.classList.remove('show');
+  }
+}
+
+function formatDateInput(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function setProgress(text: string): void {
@@ -193,6 +281,8 @@ async function runBatch(): Promise<void> {
   const advancedFiltersInput = document.getElementById('ppb-advanced-filters') as HTMLInputElement;
   const maxAspectInput = document.getElementById('ppb-max-aspect') as HTMLInputElement;
   const pHashThresholdInput = document.getElementById('ppb-phash-threshold') as HTMLInputElement;
+  const resetIndexInput = document.getElementById('ppb-reset-index') as HTMLInputElement;
+  const destinationSelect = document.getElementById('ppb-destination') as HTMLSelectElement;
   const goBtn = document.getElementById('ppb-go') as HTMLButtonElement;
 
   const creator = creatorInput?.value.trim() || detectPatreonCreatorSlug() || '';
@@ -203,6 +293,7 @@ async function runBatch(): Promise<void> {
 
   const minWidth = parseInt(minWidthInput?.value || '0', 10) || 0;
   const skipSaved = skipInput?.checked !== false;
+  const resetIndex = resetIndexInput?.checked === true;
   const fromTime = fromInput?.value ? new Date(fromInput.value).getTime() : null;
   const toTime = toInput?.value ? new Date(`${toInput.value}T23:59:59`).getTime() : null;
 
@@ -213,6 +304,7 @@ async function runBatch(): Promise<void> {
   try {
     const settings = await getSettings();
     settings.activeRuleId = 'patreon';
+    settings.selectedDownloadFolderPresetId = destinationSelect?.value || settings.selectedDownloadFolderPresetId || 'downloads';
     settings.minWidth = minWidth;
     settings.advancedImageFiltersEnabled = advancedFiltersInput?.checked !== false;
     settings.maxAspectRatio = parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio;
@@ -314,7 +406,7 @@ async function runBatch(): Promise<void> {
         continue;
       }
 
-      const result = await sendDownload(finalPairs.map((pair) => pair.image), settings);
+      const result = await sendDownload(finalPairs.map((pair) => pair.image), settings, resetIndex);
       const succeeded = result.success ?? 0;
       savedTotal += succeeded;
 
@@ -388,7 +480,8 @@ function isValidImageResponse(contentType: string, buffer: ArrayBuffer): boolean
 
 async function sendDownload(
   images: ImageInfo[],
-  settings: Settings
+  settings: Settings,
+  resetIndex: boolean
 ): Promise<{ success?: number; failed?: number; error?: string }> {
   return new Promise((resolve) => {
     try {
@@ -398,6 +491,7 @@ async function sendDownload(
           images,
           settings,
           saveAs: false,
+          resetIndex,
           waitForCompletion: true,
           interDownloadDelayMs: 500,
         },

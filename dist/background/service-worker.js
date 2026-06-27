@@ -1071,7 +1071,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 });
 async function handleDownload(message) {
-    const { images, customName, saveAs } = message;
+    const { images, customName, saveAs, resetIndex } = message;
     const settings = normalizeSettings(message.settings);
     const waitForCompletion = message.waitForCompletion !== false;
     const interDownloadDelayMs = message.interDownloadDelayMs ?? (waitForCompletion ? 500 : 0);
@@ -1089,7 +1089,7 @@ async function handleDownload(message) {
         const selectedFilenamePreset = getSelectedFilenamePreset(settings, activeRuleId);
         const template = applyDatePolicyToTemplate(selectedFilenamePreset.template, settings.includeDateInFilename !== false, activeRuleId);
         basePrefix = generateBasePrefix(template, image, customName || '');
-        const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);
+        const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts, resetIndex === true);
         filename = generateFilename(template, image, nextIndex, customName || '');
         attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
         try {
@@ -1122,9 +1122,9 @@ async function handleDownload(message) {
     }
     return { success, failed, errors };
 }
-async function getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts) {
+async function getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts, resetIndex) {
     if (!startIndexes.has(basePrefix)) {
-        startIndexes.set(basePrefix, await findNextIndex(basePrefix, downloadFolder));
+        startIndexes.set(basePrefix, resetIndex ? 1 : await findNextIndex(basePrefix, downloadFolder));
     }
     return startIndexes.get(basePrefix) + (attemptedCounts.get(basePrefix) || 0);
 }

@@ -21,6 +21,7 @@ export interface DownloadImagesMessage {
   settings: Settings;
   customName?: string;  // カスタム名モード時のファイル名
   saveAs?: boolean;     // 今回だけ保存場所を選ぶ
+  resetIndex?: boolean; // true の場合、ダウンロード履歴を見ずに今回の保存を 01 から始める
   waitForCompletion?: boolean; // false の場合はダウンロード開始時点で応答する
   interDownloadDelayMs?: number; // 連続保存時の待機時間。未指定なら従来通り500ms
 }

@@ -414,14 +414,34 @@ function extractMetadataFromArticle(article: HTMLElement): ImageMetadata {
   const creator = statusLink?.match(/^\/([^/]+)\/status\//)?.[1] || extractCreatorFromArticle(article);
   const timeEl = article.querySelector<HTMLTimeElement>('time[datetime]');
   const datetime = timeEl?.getAttribute('datetime');
+  const postDate = parseValidDate(datetime) || getDateFromTweetId(postId);
 
   return {
     creator: creator || 'unknown',
     postId,
     postTitle: '',
-    postDate: datetime ? new Date(datetime) : null,
+    postDate,
     originalFilename: '',
   };
+}
+
+function parseValidDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+function getDateFromTweetId(postId: string): Date | null {
+  if (!/^\d+$/.test(postId)) return null;
+
+  try {
+    const twitterEpochMs = 1288834974657n;
+    const timestampMs = (BigInt(postId) >> 22n) + twitterEpochMs;
+    const date = new Date(Number(timestampMs));
+    return isNaN(date.getTime()) ? null : date;
+  } catch {
+    return null;
+  }
 }
 
 function hasPotentialVideo(article: HTMLElement): boolean {

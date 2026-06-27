@@ -892,10 +892,11 @@ class XExtractor extends BaseExtractor {
         return false;
     }
     extractMetadata() {
-        const postDate = this.extractDateFromPage();
+        const postId = this.extractTweetIdFromUrl();
+        const postDate = this.extractDateFromPage() || this.getDateFromTweetId(postId);
         return {
             creator: this.extractUsernameFromUrl(),
-            postId: this.extractTweetIdFromUrl(),
+            postId,
             postTitle: '', // Xにはポストタイトルがない
             postDate,
             originalFilename: '',
@@ -927,6 +928,19 @@ class XExtractor extends BaseExtractor {
             }
         }
         return null;
+    }
+    getDateFromTweetId(postId) {
+        if (!/^\d+$/.test(postId))
+            return null;
+        try {
+            const twitterEpochMs = 1288834974657n;
+            const timestampMs = (BigInt(postId) >> 22n) + twitterEpochMs;
+            const date = new Date(Number(timestampMs));
+            return isNaN(date.getTime()) ? null : date;
+        }
+        catch {
+            return null;
+        }
     }
 }
 
@@ -2633,24 +2647,31 @@ function createOverlay() {
       }
       .picpick-dialog-content {
         background: white;
-        border-radius: 12px;
-        padding: 24px;
-        width: 460px;
+        border-radius: 10px;
+        padding: 18px;
+        width: 560px;
         max-width: 90vw;
-        max-height: min(760px, calc(100vh - 40px));
+        max-height: min(680px, calc(100vh - 32px));
         overflow-y: auto;
         box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      }
+      .picpick-dialog-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
       }
       .picpick-dialog-title {
         font-size: 18px;
         font-weight: 600;
-        margin-bottom: 16px;
+        margin-bottom: 4px;
         color: #1f2937;
       }
       .picpick-dialog-info {
         font-size: 14px;
         color: #4b5563;
-        margin-bottom: 16px;
+        margin-bottom: 0;
       }
       .picpick-dialog-info strong {
         color: #6366f1;
@@ -2730,6 +2751,10 @@ function createOverlay() {
       .picpick-dialog-buttons {
         display: flex;
         gap: 8px;
+        position: sticky;
+        bottom: -18px;
+        padding-top: 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0), #fff 28%);
       }
       .picpick-dialog-btn {
         flex: 1;
@@ -2757,11 +2782,12 @@ function createOverlay() {
         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
       }
       .picpick-dialog-btn-rescan {
-        width: 100%;
+        width: auto;
         background: #e0e7ff;
         color: #4f46e5;
-        margin-bottom: 8px;
+        margin-bottom: 0;
         flex: none;
+        padding: 8px 12px;
       }
       .picpick-dialog-btn-rescan:hover {
         background: #c7d2fe;
@@ -2774,7 +2800,20 @@ function createOverlay() {
 
       /* カスタム名モード */
       .picpick-naming-section {
-        margin-bottom: 16px;
+        margin-bottom: 12px;
+      }
+      .picpick-main-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .picpick-field-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: #374151;
+        margin-bottom: 4px;
       }
       .picpick-rule-tabs {
         display: grid;
@@ -2887,8 +2926,11 @@ function createOverlay() {
         font-family: monospace;
       }
       .picpick-include-date-row {
-        margin: 14px 0 16px;
-        padding: 10px 0;
+        margin: 0;
+        padding: 0;
+      }
+      .picpick-reset-index-row {
+        margin: 8px 0 0;
       }
       .picpick-include-date-label {
         display: flex;
@@ -2898,14 +2940,58 @@ function createOverlay() {
         color: #374151;
         cursor: pointer;
       }
-      .picpick-include-date-label input[type="checkbox"] {
+      .picpick-include-date-label input[type="checkbox"],
+      .picpick-reset-index-label input[type="checkbox"] {
         flex: 0 0 auto;
         width: auto;
         margin: 0;
         cursor: pointer;
       }
+      .picpick-reset-index-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #374151;
+        cursor: pointer;
+      }
+      .picpick-advanced-panel {
+        margin: 10px 0 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #fafafa;
+      }
+      .picpick-advanced-panel summary {
+        cursor: pointer;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        list-style: none;
+      }
+      .picpick-advanced-panel summary::-webkit-details-marker {
+        display: none;
+      }
+      .picpick-advanced-panel summary::after {
+        content: '+';
+        float: right;
+        color: #6b7280;
+      }
+      .picpick-advanced-panel[open] summary::after {
+        content: '-';
+      }
+      .picpick-advanced-body {
+        padding: 0 12px 12px;
+      }
+      .picpick-option-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin: 8px 0;
+      }
       .picpick-filter-section {
-        margin: 0 0 14px;
+        margin: 10px 0 0;
         padding: 10px;
         background: #f9fafb;
         border: 1px solid #e5e7eb;
@@ -2956,12 +3042,16 @@ function createOverlay() {
     </div>
     <div id="picpick-confirm-dialog">
       <div class="picpick-dialog-content">
-        <div class="picpick-dialog-title">画像を保存</div>
-        <div class="picpick-dialog-info">
-          <strong id="picpick-dialog-count">0</strong> 枚の画像が見つかりました
-          <span id="picpick-dialog-scanned" style="font-size: 12px; color: #9ca3af; margin-left: 8px;"></span>
+        <div class="picpick-dialog-header">
+          <div>
+            <div class="picpick-dialog-title">画像を保存</div>
+            <div class="picpick-dialog-info">
+              対象 <strong id="picpick-dialog-count">0</strong> 枚
+              <span id="picpick-dialog-scanned" style="font-size: 12px; color: #9ca3af; margin-left: 8px;"></span>
+            </div>
+          </div>
+          <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
         </div>
-        <div id="picpick-image-list" class="picpick-image-list" style="display: none;"></div>
 
         <!-- サイトルール選択 -->
         <div style="margin-bottom: 10px;">
@@ -2971,18 +3061,20 @@ function createOverlay() {
           </select>
         </div>
 
-        <div class="picpick-include-date-row">
-          <label class="picpick-include-date-label">
-            <input type="checkbox" id="picpick-include-date">
-            <span>日付をいれる</span>
-          </label>
-        </div>
-
         <!-- 保存名プリセット -->
         <div class="picpick-naming-section">
-          <div style="margin-bottom: 8px;">
-            <label style="display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 4px;">保存名プリセット</label>
-            <select id="picpick-filename-preset-select" class="picpick-preset-select"></select>
+          <div class="picpick-main-grid">
+            <div>
+              <label class="picpick-field-label">保存名</label>
+              <select id="picpick-filename-preset-select" class="picpick-preset-select"></select>
+            </div>
+            <div class="picpick-save-destination">
+              <label class="picpick-field-label">保存先</label>
+              <select id="picpick-save-destination-select" class="picpick-preset-select">
+                <option value="default">デフォルト</option>
+                <option value="choose">保存場所を選択</option>
+              </select>
+            </div>
           </div>
           <div id="picpick-custom-name-section" class="picpick-custom-name-section">
             <div class="picpick-custom-name-row">
@@ -2993,39 +3085,48 @@ function createOverlay() {
             保存結果: <span id="picpick-filename-preview">2026-04-08_name_01.jpg</span>
           </div>
         </div>
-        <select id="picpick-preset-select" class="picpick-preset-select">
-          <option value="">カスタム</option>
-        </select>
-        <div class="picpick-size-inputs">
-          <div class="picpick-size-input">
-            <label>最小横幅 (px)</label>
-            <input type="number" id="picpick-min-width" min="0" value="800">
-          </div>
-        </div>
-        <div class="picpick-filter-section">
-          <label class="picpick-filter-row">
-            <input type="checkbox" id="picpick-advanced-filters">
-            <span>ルールフィルタ</span>
-          </label>
-          <div class="picpick-filter-grid">
-            <div class="picpick-filter-field">
-              <label>横長上限</label>
-              <input type="number" id="picpick-max-aspect" min="0.1" step="0.1">
+
+        <details class="picpick-advanced-panel">
+          <summary>詳細設定</summary>
+          <div class="picpick-advanced-body">
+            <div class="picpick-option-row">
+              <label class="picpick-include-date-label">
+                <input type="checkbox" id="picpick-include-date">
+                <span>日付を付ける</span>
+              </label>
+              <label class="picpick-reset-index-label">
+                <input type="checkbox" id="picpick-reset-index">
+                <span>連番を 01 から開始</span>
+              </label>
             </div>
-            <div class="picpick-filter-field">
-              <label>pHash距離</label>
-              <input type="number" id="picpick-phash-threshold" min="0" max="32" step="1">
+            <select id="picpick-preset-select" class="picpick-preset-select">
+              <option value="">カスタム</option>
+            </select>
+            <div class="picpick-size-inputs">
+              <div class="picpick-size-input">
+                <label>最小横幅 (px)</label>
+                <input type="number" id="picpick-min-width" min="0" value="800">
+              </div>
             </div>
+            <div class="picpick-filter-section">
+              <label class="picpick-filter-row">
+                <input type="checkbox" id="picpick-advanced-filters">
+                <span>自動フィルタを使う</span>
+              </label>
+              <div class="picpick-filter-grid">
+                <div class="picpick-filter-field">
+                  <label>横長画像の除外</label>
+                  <input type="number" id="picpick-max-aspect" min="0.1" step="0.1">
+                </div>
+                <div class="picpick-filter-field">
+                  <label>近似重複の強さ</label>
+                  <input type="number" id="picpick-phash-threshold" min="0" max="32" step="1">
+                </div>
+              </div>
+            </div>
+            <div id="picpick-image-list" class="picpick-image-list" style="display: none;"></div>
           </div>
-        </div>
-        <div class="picpick-save-destination">
-          <label>保存先</label>
-          <select id="picpick-save-destination-select" class="picpick-preset-select">
-            <option value="default">デフォルト</option>
-            <option value="choose">保存場所を選択</option>
-          </select>
-        </div>
-        <button class="picpick-dialog-btn picpick-dialog-btn-rescan" id="picpick-rescan-btn">再スキャン</button>
+        </details>
         
         <div class="picpick-dialog-buttons">
           <button class="picpick-dialog-btn picpick-dialog-btn-cancel" id="picpick-cancel-btn">キャンセル</button>
@@ -3359,6 +3460,10 @@ function showConfirmDialog() {
     const includeDateCheckbox = document.getElementById('picpick-include-date');
     if (includeDateCheckbox) {
         includeDateCheckbox.checked = currentSettings.includeDateInFilename !== false;
+    }
+    const resetIndexCheckbox = document.getElementById('picpick-reset-index');
+    if (resetIndexCheckbox) {
+        resetIndexCheckbox.checked = false;
     }
     updateFilteredCount();
     initOverlayNamingMode();
@@ -3761,6 +3866,8 @@ async function handleConfirmDownload() {
         }
         const customNameInput = document.getElementById('picpick-custom-name');
         const customName = customNameInput?.value.trim() || undefined;
+        const resetIndexCheckbox = document.getElementById('picpick-reset-index');
+        const resetIndex = resetIndexCheckbox?.checked === true;
         const sendMsgPromise = new Promise((resolve, reject) => {
             try {
                 chrome.runtime.sendMessage({
@@ -3769,6 +3876,7 @@ async function handleConfirmDownload() {
                     settings,
                     customName,
                     saveAs: false,
+                    resetIndex,
                     waitForCompletion: false,
                 }, (response) => {
                     if (chrome.runtime.lastError) {
@@ -4365,13 +4473,33 @@ function extractMetadataFromArticle(article) {
     const creator = statusLink?.match(/^\/([^/]+)\/status\//)?.[1] || extractCreatorFromArticle(article);
     const timeEl = article.querySelector('time[datetime]');
     const datetime = timeEl?.getAttribute('datetime');
+    const postDate = parseValidDate(datetime) || getDateFromTweetId(postId);
     return {
         creator: creator || 'unknown',
         postId,
         postTitle: '',
-        postDate: datetime ? new Date(datetime) : null,
+        postDate,
         originalFilename: '',
     };
+}
+function parseValidDate(value) {
+    if (!value)
+        return null;
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? null : date;
+}
+function getDateFromTweetId(postId) {
+    if (!/^\d+$/.test(postId))
+        return null;
+    try {
+        const twitterEpochMs = 1288834974657n;
+        const timestampMs = (BigInt(postId) >> 22n) + twitterEpochMs;
+        const date = new Date(Number(timestampMs));
+        return isNaN(date.getTime()) ? null : date;
+    }
+    catch {
+        return null;
+    }
 }
 function hasPotentialVideo(article) {
     return Boolean(article.querySelector('video, a[href*="/video/"], [data-testid="videoPlayer"], img[src*="video_thumb"], img[src*="amplify_video_thumb"], img[src*="tweet_video_thumb"]'));
@@ -4986,7 +5114,17 @@ function injectButton() {
       .pb-check input { width: auto; margin: 0; }
       .pb-grid2 { display: flex; gap: 8px; }
       .pb-grid2 > div { flex: 1; }
+      .pb-segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
+      .pb-seg { padding: 7px 4px; border: 1px solid #d1d5db; background: #fff; border-radius: 7px; font-size: 12px; color: #374151; cursor: pointer; }
+      .pb-seg.active { border-color: #0ea5e9; background: #eff6ff; color: #0369a1; font-weight: 600; }
+      .pb-custom-range { display: none; }
+      .pb-custom-range.show { display: flex; }
+      .pb-select { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; box-sizing: border-box; }
       .pb-filter-box { margin: 10px 0; padding: 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+      .pb-details { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fafafa; }
+      .pb-details summary { cursor: pointer; padding: 9px 10px; font-size: 13px; font-weight: 600; color: #374151; list-style: none; }
+      .pb-details summary::-webkit-details-marker { display: none; }
+      .pb-details-body { padding: 0 10px 10px; }
       .pb-buttons { display: flex; gap: 8px; margin-top: 12px; }
       .pb-btn { flex: 1; padding: 9px; border: none; border-radius: 8px; font-size: 13px;
         font-weight: 500; cursor: pointer; }
@@ -5008,39 +5146,55 @@ function injectButton() {
         <label>creatorId</label>
         <input type="text" id="pb-creator" placeholder="例: creatorname">
       </div>
+      <div class="pb-segmented" role="group" aria-label="保存期間">
+        <button type="button" class="pb-seg active" data-range="all">全期間</button>
+        <button type="button" class="pb-seg" data-range="week">7日</button>
+        <button type="button" class="pb-seg" data-range="month">30日</button>
+        <button type="button" class="pb-seg" data-range="custom">指定</button>
+      </div>
+      <div class="pb-row pb-grid2 pb-custom-range" id="pb-custom-range">
+        <div>
+          <label>開始日</label>
+          <input type="date" id="pb-from">
+        </div>
+        <div>
+          <label>終了日</label>
+          <input type="date" id="pb-to">
+        </div>
+      </div>
       <div class="pb-row pb-grid2">
         <div>
-          <label>最小横幅 (px)</label>
-          <input type="number" id="pb-minwidth" min="0" value="800">
+          <label>保存先</label>
+          <select id="pb-destination" class="pb-select"></select>
         </div>
         <div>
           <label>&nbsp;</label>
           <label class="pb-check"><input type="checkbox" id="pb-skip" checked> 未保存のみ</label>
         </div>
       </div>
-      <div class="pb-row pb-grid2">
-        <div>
-          <label>開始日（以降）</label>
-          <input type="date" id="pb-from">
-        </div>
-        <div>
-          <label>終了日（以前）</label>
-          <input type="date" id="pb-to">
-        </div>
-      </div>
-      <div class="pb-filter-box">
-        <label class="pb-check"><input type="checkbox" id="pb-advanced-filters" checked> ルールフィルタ</label>
-        <div class="pb-row pb-grid2" style="margin-top:8px;margin-bottom:0;">
-          <div>
-            <label>横長上限</label>
-            <input type="number" id="pb-max-aspect" min="0.1" step="0.1" value="3.2">
+      <details class="pb-details">
+        <summary>詳細設定</summary>
+        <div class="pb-details-body">
+          <div class="pb-row">
+            <label>最小横幅 (px)</label>
+            <input type="number" id="pb-minwidth" min="0" value="800">
           </div>
-          <div>
-            <label>pHash距離</label>
-            <input type="number" id="pb-phash-threshold" min="0" max="32" step="1" value="6">
+          <label class="pb-check"><input type="checkbox" id="pb-reset-index"> 連番を 01 から開始</label>
+          <div class="pb-filter-box">
+            <label class="pb-check"><input type="checkbox" id="pb-advanced-filters" checked> 自動フィルタを使う</label>
+            <div class="pb-row pb-grid2" style="margin-top:8px;margin-bottom:0;">
+              <div>
+                <label>横長画像の除外</label>
+                <input type="number" id="pb-max-aspect" min="0.1" step="0.1" value="3.2">
+              </div>
+              <div>
+                <label>近似重複の強さ</label>
+                <input type="number" id="pb-phash-threshold" min="0" max="32" step="1" value="6">
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </details>
       <div class="pb-buttons">
         <button class="pb-btn pb-btn-go" id="pb-go">開始</button>
         <button class="pb-btn pb-btn-stop" id="pb-stop">中止</button>
@@ -5071,6 +5225,10 @@ function injectButton() {
         abortRequested = true;
         setProgress('中止しています…');
     });
+    root.querySelectorAll('.pb-seg').forEach((button) => {
+        button.addEventListener('click', () => applyDateRange(button.dataset.range || 'all'));
+    });
+    void hydrateDestinationSelect();
 }
 function togglePanel() {
     if (!panelEl)
@@ -5082,7 +5240,61 @@ function togglePanel() {
         if (creatorInput && !creatorInput.value) {
             creatorInput.value = detectFanboxCreatorId() || '';
         }
+        void hydrateDestinationSelect();
     }
+}
+async function hydrateDestinationSelect() {
+    const select = document.getElementById('pb-destination');
+    if (!select)
+        return;
+    const settings = await creator_batch_getSettings();
+    select.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = 'downloads';
+    defaultOption.textContent = settings.defaultDownloadFolderPath
+        ? `${getDefaultDownloadFolderLabel(settings)} (${settings.defaultDownloadFolderPath})`
+        : getDefaultDownloadFolderLabel(settings);
+    select.appendChild(defaultOption);
+    for (const preset of settings.downloadFolderPresets || []) {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.label || preset.folder;
+        select.appendChild(option);
+    }
+    select.value = Array.from(select.options).some((option) => option.value === settings.selectedDownloadFolderPresetId)
+        ? settings.selectedDownloadFolderPresetId || 'downloads'
+        : 'downloads';
+}
+function applyDateRange(range) {
+    const fromInput = document.getElementById('pb-from');
+    const toInput = document.getElementById('pb-to');
+    const customRange = document.getElementById('pb-custom-range');
+    document.querySelectorAll('.pb-seg').forEach((button) => {
+        button.classList.toggle('active', button.dataset.range === range);
+    });
+    const today = new Date();
+    const to = formatDateInput(today);
+    if (range === 'week' || range === 'month') {
+        const from = new Date(today);
+        from.setDate(today.getDate() - (range === 'week' ? 7 : 30));
+        fromInput.value = formatDateInput(from);
+        toInput.value = to;
+        customRange?.classList.remove('show');
+    }
+    else if (range === 'custom') {
+        customRange?.classList.add('show');
+    }
+    else {
+        fromInput.value = '';
+        toInput.value = '';
+        customRange?.classList.remove('show');
+    }
+}
+function formatDateInput(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
 }
 function setProgress(text) {
     const el = document.getElementById('pb-progress');
@@ -5110,6 +5322,8 @@ async function runBatch() {
     const advancedFiltersInput = document.getElementById('pb-advanced-filters');
     const maxAspectInput = document.getElementById('pb-max-aspect');
     const pHashThresholdInput = document.getElementById('pb-phash-threshold');
+    const resetIndexInput = document.getElementById('pb-reset-index');
+    const destinationSelect = document.getElementById('pb-destination');
     const goBtn = document.getElementById('pb-go');
     const creatorId = creatorInput?.value.trim();
     if (!creatorId) {
@@ -5118,6 +5332,7 @@ async function runBatch() {
     }
     const minWidth = parseInt(minWidthInput?.value || '0', 10) || 0;
     const skipSaved = skipInput?.checked !== false;
+    const resetIndex = resetIndexInput?.checked === true;
     const fromTime = fromInput?.value ? new Date(fromInput.value).getTime() : null;
     const toTime = toInput?.value ? new Date(`${toInput.value}T23:59:59`).getTime() : null;
     isRunning = true;
@@ -5127,6 +5342,7 @@ async function runBatch() {
     try {
         const settings = await creator_batch_getSettings();
         settings.activeRuleId = 'pixiv_fanbox'; // FANBOX用ファイル名プリセットを使う
+        settings.selectedDownloadFolderPresetId = destinationSelect?.value || settings.selectedDownloadFolderPresetId || 'downloads';
         settings.minWidth = minWidth;
         settings.advancedImageFiltersEnabled = advancedFiltersInput?.checked !== false;
         settings.maxAspectRatio = parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio;
@@ -5205,7 +5421,7 @@ async function runBatch() {
                 log(`- ${post.title || post.id}: pHash除外 ${pHashFilter.filtered.length}/${syncPairs.length}枚`);
                 continue;
             }
-            const result = await sendDownload(finalPairs.map((pair) => pair.image), settings);
+            const result = await sendDownload(finalPairs.map((pair) => pair.image), settings, resetIndex);
             const succeeded = result.success ?? 0;
             savedTotal += succeeded;
             // 成功有無に関わらず、実際に保存へ渡した画像だけ台帳へ（再試行で二重保存を避ける）。
@@ -5295,7 +5511,7 @@ function creator_batch_isValidImageResponse(contentType, buffer) {
         bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
     return isJpeg || isPng || isGif || isWebp;
 }
-async function sendDownload(images, settings) {
+async function sendDownload(images, settings, resetIndex) {
     return new Promise((resolve) => {
         try {
             chrome.runtime.sendMessage({
@@ -5303,6 +5519,7 @@ async function sendDownload(images, settings) {
                 images,
                 settings,
                 saveAs: false,
+                resetIndex,
                 waitForCompletion: true,
                 interDownloadDelayMs: 500,
             }, (response) => {
@@ -5900,7 +6117,17 @@ function patreon_batch_injectButton() {
       .ppb-check input { width: auto; margin: 0; }
       .ppb-grid2 { display: flex; gap: 8px; }
       .ppb-grid2 > div { flex: 1; }
+      .ppb-segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
+      .ppb-seg { padding: 7px 4px; border: 1px solid #d1d5db; background: #fff; border-radius: 7px; font-size: 12px; color: #374151; cursor: pointer; }
+      .ppb-seg.active { border-color: #ff424d; background: #fff1f2; color: #be123c; font-weight: 600; }
+      .ppb-custom-range { display: none; }
+      .ppb-custom-range.show { display: flex; }
+      .ppb-select { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; box-sizing: border-box; }
       .ppb-filter-box { margin: 10px 0; padding: 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+      .ppb-details { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fafafa; }
+      .ppb-details summary { cursor: pointer; padding: 9px 10px; font-size: 13px; font-weight: 600; color: #374151; list-style: none; }
+      .ppb-details summary::-webkit-details-marker { display: none; }
+      .ppb-details-body { padding: 0 10px 10px; }
       .ppb-buttons { display: flex; gap: 8px; margin-top: 12px; }
       .ppb-btn { flex: 1; padding: 9px; border: none; border-radius: 8px; font-size: 13px;
         font-weight: 500; cursor: pointer; }
@@ -5922,39 +6149,55 @@ function patreon_batch_injectButton() {
         <label>creator / campaignId</label>
         <input type="text" id="ppb-creator" placeholder="例: creatorname または 123456">
       </div>
+      <div class="ppb-segmented" role="group" aria-label="保存期間">
+        <button type="button" class="ppb-seg active" data-range="all">全期間</button>
+        <button type="button" class="ppb-seg" data-range="week">7日</button>
+        <button type="button" class="ppb-seg" data-range="month">30日</button>
+        <button type="button" class="ppb-seg" data-range="custom">指定</button>
+      </div>
+      <div class="ppb-row ppb-grid2 ppb-custom-range" id="ppb-custom-range">
+        <div>
+          <label>開始日</label>
+          <input type="date" id="ppb-from">
+        </div>
+        <div>
+          <label>終了日</label>
+          <input type="date" id="ppb-to">
+        </div>
+      </div>
       <div class="ppb-row ppb-grid2">
         <div>
-          <label>最小横幅 (px)</label>
-          <input type="number" id="ppb-minwidth" min="0" value="800">
+          <label>保存先</label>
+          <select id="ppb-destination" class="ppb-select"></select>
         </div>
         <div>
           <label>&nbsp;</label>
           <label class="ppb-check"><input type="checkbox" id="ppb-skip" checked> 未保存のみ</label>
         </div>
       </div>
-      <div class="ppb-row ppb-grid2">
-        <div>
-          <label>開始日（以降）</label>
-          <input type="date" id="ppb-from">
-        </div>
-        <div>
-          <label>終了日（以前）</label>
-          <input type="date" id="ppb-to">
-        </div>
-      </div>
-      <div class="ppb-filter-box">
-        <label class="ppb-check"><input type="checkbox" id="ppb-advanced-filters" checked> ルールフィルタ</label>
-        <div class="ppb-row ppb-grid2" style="margin-top:8px;margin-bottom:0;">
-          <div>
-            <label>横長上限</label>
-            <input type="number" id="ppb-max-aspect" min="0.1" step="0.1" value="3.2">
+      <details class="ppb-details">
+        <summary>詳細設定</summary>
+        <div class="ppb-details-body">
+          <div class="ppb-row">
+            <label>最小横幅 (px)</label>
+            <input type="number" id="ppb-minwidth" min="0" value="800">
           </div>
-          <div>
-            <label>pHash距離</label>
-            <input type="number" id="ppb-phash-threshold" min="0" max="32" step="1" value="6">
+          <label class="ppb-check"><input type="checkbox" id="ppb-reset-index"> 連番を 01 から開始</label>
+          <div class="ppb-filter-box">
+            <label class="ppb-check"><input type="checkbox" id="ppb-advanced-filters" checked> 自動フィルタを使う</label>
+            <div class="ppb-row ppb-grid2" style="margin-top:8px;margin-bottom:0;">
+              <div>
+                <label>横長画像の除外</label>
+                <input type="number" id="ppb-max-aspect" min="0.1" step="0.1" value="3.2">
+              </div>
+              <div>
+                <label>近似重複の強さ</label>
+                <input type="number" id="ppb-phash-threshold" min="0" max="32" step="1" value="6">
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </details>
       <div class="ppb-buttons">
         <button class="ppb-btn ppb-btn-go" id="ppb-go">開始</button>
         <button class="ppb-btn ppb-btn-stop" id="ppb-stop">中止</button>
@@ -5984,6 +6227,10 @@ function patreon_batch_injectButton() {
         patreon_batch_abortRequested = true;
         patreon_batch_setProgress('中止しています...');
     });
+    root.querySelectorAll('.ppb-seg').forEach((button) => {
+        button.addEventListener('click', () => patreon_batch_applyDateRange(button.dataset.range || 'all'));
+    });
+    void patreon_batch_hydrateDestinationSelect();
 }
 function patreon_batch_togglePanel() {
     if (!patreon_batch_panelEl)
@@ -5995,7 +6242,61 @@ function patreon_batch_togglePanel() {
         if (creatorInput && !creatorInput.value) {
             creatorInput.value = detectPatreonCreatorSlug() || '';
         }
+        void patreon_batch_hydrateDestinationSelect();
     }
+}
+async function patreon_batch_hydrateDestinationSelect() {
+    const select = document.getElementById('ppb-destination');
+    if (!select)
+        return;
+    const settings = await patreon_batch_getSettings();
+    select.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = 'downloads';
+    defaultOption.textContent = settings.defaultDownloadFolderPath
+        ? `${getDefaultDownloadFolderLabel(settings)} (${settings.defaultDownloadFolderPath})`
+        : getDefaultDownloadFolderLabel(settings);
+    select.appendChild(defaultOption);
+    for (const preset of settings.downloadFolderPresets || []) {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.label || preset.folder;
+        select.appendChild(option);
+    }
+    select.value = Array.from(select.options).some((option) => option.value === settings.selectedDownloadFolderPresetId)
+        ? settings.selectedDownloadFolderPresetId || 'downloads'
+        : 'downloads';
+}
+function patreon_batch_applyDateRange(range) {
+    const fromInput = document.getElementById('ppb-from');
+    const toInput = document.getElementById('ppb-to');
+    const customRange = document.getElementById('ppb-custom-range');
+    document.querySelectorAll('.ppb-seg').forEach((button) => {
+        button.classList.toggle('active', button.dataset.range === range);
+    });
+    const today = new Date();
+    const to = patreon_batch_formatDateInput(today);
+    if (range === 'week' || range === 'month') {
+        const from = new Date(today);
+        from.setDate(today.getDate() - (range === 'week' ? 7 : 30));
+        fromInput.value = patreon_batch_formatDateInput(from);
+        toInput.value = to;
+        customRange?.classList.remove('show');
+    }
+    else if (range === 'custom') {
+        customRange?.classList.add('show');
+    }
+    else {
+        fromInput.value = '';
+        toInput.value = '';
+        customRange?.classList.remove('show');
+    }
+}
+function patreon_batch_formatDateInput(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
 }
 function patreon_batch_setProgress(text) {
     const el = document.getElementById('ppb-progress');
@@ -6023,6 +6324,8 @@ async function patreon_batch_runBatch() {
     const advancedFiltersInput = document.getElementById('ppb-advanced-filters');
     const maxAspectInput = document.getElementById('ppb-max-aspect');
     const pHashThresholdInput = document.getElementById('ppb-phash-threshold');
+    const resetIndexInput = document.getElementById('ppb-reset-index');
+    const destinationSelect = document.getElementById('ppb-destination');
     const goBtn = document.getElementById('ppb-go');
     const creator = creatorInput?.value.trim() || detectPatreonCreatorSlug() || '';
     if (!creator) {
@@ -6031,6 +6334,7 @@ async function patreon_batch_runBatch() {
     }
     const minWidth = parseInt(minWidthInput?.value || '0', 10) || 0;
     const skipSaved = skipInput?.checked !== false;
+    const resetIndex = resetIndexInput?.checked === true;
     const fromTime = fromInput?.value ? new Date(fromInput.value).getTime() : null;
     const toTime = toInput?.value ? new Date(`${toInput.value}T23:59:59`).getTime() : null;
     patreon_batch_isRunning = true;
@@ -6040,6 +6344,7 @@ async function patreon_batch_runBatch() {
     try {
         const settings = await patreon_batch_getSettings();
         settings.activeRuleId = 'patreon';
+        settings.selectedDownloadFolderPresetId = destinationSelect?.value || settings.selectedDownloadFolderPresetId || 'downloads';
         settings.minWidth = minWidth;
         settings.advancedImageFiltersEnabled = advancedFiltersInput?.checked !== false;
         settings.maxAspectRatio = parseFloat(maxAspectInput?.value || '') || DEFAULT_SETTINGS.maxAspectRatio;
@@ -6128,7 +6433,7 @@ async function patreon_batch_runBatch() {
                 patreon_batch_log(`- ${post.title || post.id}: pHash除外 ${pHashFilter.filtered.length}/${syncPairs.length}枚`);
                 continue;
             }
-            const result = await patreon_batch_sendDownload(finalPairs.map((pair) => pair.image), settings);
+            const result = await patreon_batch_sendDownload(finalPairs.map((pair) => pair.image), settings, resetIndex);
             const succeeded = result.success ?? 0;
             savedTotal += succeeded;
             const ids = finalPairs.map((pair) => patreonImageId(pair.item));
@@ -6202,7 +6507,7 @@ function patreon_batch_isValidImageResponse(contentType, buffer) {
         bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
     return isJpeg || isPng || isGif || isWebp;
 }
-async function patreon_batch_sendDownload(images, settings) {
+async function patreon_batch_sendDownload(images, settings, resetIndex) {
     return new Promise((resolve) => {
         try {
             chrome.runtime.sendMessage({
@@ -6210,6 +6515,7 @@ async function patreon_batch_sendDownload(images, settings) {
                 images,
                 settings,
                 saveAs: false,
+                resetIndex,
                 waitForCompletion: true,
                 interDownloadDelayMs: 500,
             }, (response) => {

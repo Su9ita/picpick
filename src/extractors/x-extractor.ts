@@ -102,11 +102,12 @@ export class XExtractor extends BaseExtractor {
   }
 
   extractMetadata(): ImageMetadata {
-    const postDate = this.extractDateFromPage();
+    const postId = this.extractTweetIdFromUrl();
+    const postDate = this.extractDateFromPage() || this.getDateFromTweetId(postId);
 
     return {
       creator: this.extractUsernameFromUrl(),
-      postId: this.extractTweetIdFromUrl(),
+      postId,
       postTitle: '', // Xにはポストタイトルがない
       postDate,
       originalFilename: '',
@@ -145,5 +146,18 @@ export class XExtractor extends BaseExtractor {
     }
 
     return null;
+  }
+
+  private getDateFromTweetId(postId: string): Date | null {
+    if (!/^\d+$/.test(postId)) return null;
+
+    try {
+      const twitterEpochMs = 1288834974657n;
+      const timestampMs = (BigInt(postId) >> 22n) + twitterEpochMs;
+      const date = new Date(Number(timestampMs));
+      return isNaN(date.getTime()) ? null : date;
+    } catch {
+      return null;
+    }
   }
 }

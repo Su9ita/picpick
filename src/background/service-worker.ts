@@ -47,7 +47,7 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
   failed: number;
   errors: string[];
 }> {
-  const { images, customName, saveAs } = message;
+  const { images, customName, saveAs, resetIndex } = message;
   const settings = normalizeSettings(message.settings);
   const waitForCompletion = message.waitForCompletion !== false;
   const interDownloadDelayMs = message.interDownloadDelayMs ?? (waitForCompletion ? 500 : 0);
@@ -73,7 +73,7 @@ async function handleDownload(message: DownloadImagesMessage): Promise<{
     );
 
     basePrefix = generateBasePrefix(template, image, customName || '');
-    const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts);
+    const nextIndex = await getNextBatchIndex(basePrefix, downloadFolder, startIndexes, attemptedCounts, resetIndex === true);
     filename = generateFilename(template, image, nextIndex, customName || '');
 
     attemptedCounts.set(basePrefix, (attemptedCounts.get(basePrefix) || 0) + 1);
@@ -114,10 +114,11 @@ async function getNextBatchIndex(
   basePrefix: string,
   downloadFolder: string,
   startIndexes: Map<string, number>,
-  attemptedCounts: Map<string, number>
+  attemptedCounts: Map<string, number>,
+  resetIndex: boolean
 ): Promise<number> {
   if (!startIndexes.has(basePrefix)) {
-    startIndexes.set(basePrefix, await findNextIndex(basePrefix, downloadFolder));
+    startIndexes.set(basePrefix, resetIndex ? 1 : await findNextIndex(basePrefix, downloadFolder));
   }
 
   return startIndexes.get(basePrefix)! + (attemptedCounts.get(basePrefix) || 0);
