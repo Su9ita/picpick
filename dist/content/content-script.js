@@ -6100,7 +6100,7 @@ function patreon_batch_injectButton() {
       #picpick-patreon-batch-btn svg { width: 22px; height: 22px; fill: #fff; }
       #picpick-patreon-batch-panel {
         position: absolute; top: 52px; left: 0;
-        width: 330px; max-width: 90vw;
+        width: 360px; max-width: 92vw;
         background: #fff; border-radius: 12px; padding: 16px;
         box-shadow: 0 8px 32px rgba(0,0,0,0.2); display: none;
         color: #1f2937;
@@ -6117,8 +6117,8 @@ function patreon_batch_injectButton() {
       .ppb-check input { width: auto; margin: 0; }
       .ppb-grid2 { display: flex; gap: 8px; }
       .ppb-grid2 > div { flex: 1; }
-      .ppb-segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
-      .ppb-seg { padding: 7px 4px; border: 1px solid #d1d5db; background: #fff; border-radius: 7px; font-size: 12px; color: #374151; cursor: pointer; }
+      .ppb-segmented { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-bottom: 10px; }
+      .ppb-seg { min-width: 0; padding: 7px 2px; border: 1px solid #d1d5db; background: #fff; border-radius: 7px; font-size: 11px; color: #374151; cursor: pointer; white-space: nowrap; }
       .ppb-seg.active { border-color: #ff424d; background: #fff1f2; color: #be123c; font-weight: 600; }
       .ppb-custom-range { display: none; }
       .ppb-custom-range.show { display: flex; }
@@ -6151,6 +6151,7 @@ function patreon_batch_injectButton() {
       </div>
       <div class="ppb-segmented" role="group" aria-label="保存期間">
         <button type="button" class="ppb-seg active" data-range="all">全期間</button>
+        <button type="button" class="ppb-seg" data-range="today">今日</button>
         <button type="button" class="ppb-seg" data-range="week">7日</button>
         <button type="button" class="ppb-seg" data-range="month">30日</button>
         <button type="button" class="ppb-seg" data-range="custom">指定</button>
@@ -6276,7 +6277,12 @@ function patreon_batch_applyDateRange(range) {
     });
     const today = new Date();
     const to = patreon_batch_formatDateInput(today);
-    if (range === 'week' || range === 'month') {
+    if (range === 'today') {
+        fromInput.value = to;
+        toInput.value = to;
+        customRange?.classList.remove('show');
+    }
+    else if (range === 'week' || range === 'month') {
         const from = new Date(today);
         from.setDate(today.getDate() - (range === 'week' ? 7 : 30));
         fromInput.value = patreon_batch_formatDateInput(from);
