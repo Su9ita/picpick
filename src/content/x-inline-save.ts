@@ -4,6 +4,7 @@ import { Settings, DEFAULT_SETTINGS } from '../types/settings';
 import { normalizeSettings } from '../utils/settings-normalizer';
 
 const PROCESSED_ATTR = 'data-picpick-x-inline';
+const VIEWER_PROCESSED_ATTR = 'data-picpick-x-viewer';
 const STORAGE_KEY = 'picpickXDownloadedMedia';
 const SCAN_DEBOUNCE_MS = 250;
 const SETTINGS_CACHE_MS = 5000;
@@ -50,6 +51,8 @@ function scheduleScan(): void {
 }
 
 function scanArticles(): void {
+  scanPhotoViewer();
+
   document.querySelectorAll<HTMLElement>('article').forEach((article) => {
     if (article.getAttribute(PROCESSED_ATTR) === 'true') {
       if (!article.querySelector('.picpick-x-inline-button')) {
@@ -70,6 +73,40 @@ function scanArticles(): void {
     article.setAttribute(PROCESSED_ATTR, 'true');
     addSaveButton(article, actionBar);
   });
+}
+
+function scanPhotoViewer(): void {
+  const viewer = findPhotoViewer();
+  if (!viewer) return;
+
+  if (viewer.getAttribute(VIEWER_PROCESSED_ATTR) === 'true') {
+    if (!viewer.querySelector('.picpick-x-viewer-button')) {
+      addViewerSaveButton(viewer);
+    } else {
+      updateButtonStateForArticle(viewer, '.picpick-x-viewer-button');
+    }
+    return;
+  }
+
+  const images = extractImagesFromArticle(viewer);
+  if (images.length === 0) return;
+
+  viewer.setAttribute(VIEWER_PROCESSED_ATTR, 'true');
+  addViewerSaveButton(viewer);
+}
+
+function findPhotoViewer(): HTMLElement | null {
+  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"]'));
+  const dialog = dialogs.reverse().find((candidate) => candidate.querySelector('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"]'));
+  if (dialog) return dialog;
+
+  if (!/\/status\/\d+\/photo\//.test(location.pathname)) return null;
+  const visibleMedia = Array.from(document.querySelectorAll<HTMLImageElement>('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"]'))
+    .find((img) => {
+      const rect = img.getBoundingClientRect();
+      return rect.width >= 200 && rect.height >= 200;
+    });
+  return visibleMedia?.closest<HTMLElement>('div') || null;
 }
 
 function findActionBar(article: HTMLElement): HTMLElement | null {
@@ -117,6 +154,44 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
   wrapper.appendChild(button);
   actionBar.appendChild(wrapper);
   restoreButtonState(article, button);
+}
+
+function addViewerSaveButton(viewer: HTMLElement): void {
+  const existing = viewer.querySelector<HTMLButtonElement>('.picpick-x-viewer-button');
+  if (existing) {
+    restoreButtonState(viewer, existing);
+    return;
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'picpick-x-inline-slot picpick-x-viewer-slot';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'picpick-x-inline-button picpick-x-viewer-button';
+  button.setAttribute('aria-label', 'Picpickで画像を保存');
+  button.title = 'Picpickで画像を保存';
+  button.innerHTML = getIconSvg('ready');
+
+  button.addEventListener('pointerdown', (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    spawnRipple(button);
+    handleInlineDownload(viewer, button).catch((error) => {
+      setButtonError(button, getErrorMessage(error));
+      window.setTimeout(() => updateButtonStateForArticle(viewer, '.picpick-x-viewer-button'), ERROR_RESET_MS);
+    });
+  });
+
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  viewer.appendChild(wrapper);
+  wrapper.appendChild(button);
+  restoreButtonState(viewer, button);
 }
 
 function restoreButtonState(article: HTMLElement, button: HTMLButtonElement): void {
@@ -192,8 +267,8 @@ async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElem
   }
 }
 
-function updateButtonStateForArticle(article: HTMLElement): void {
-  const button = article.querySelector<HTMLButtonElement>('.picpick-x-inline-button');
+function updateButtonStateForArticle(article: HTMLElement, buttonSelector = '.picpick-x-inline-button'): void {
+  const button = article.querySelector<HTMLButtonElement>(buttonSelector);
   if (!button || button.dataset.state === 'loading') return;
 
   const images = extractImagesFromArticle(article);
@@ -410,8 +485,10 @@ function collectMediaUrlsFromStyle(element: HTMLElement): string[] {
 
 function extractMetadataFromArticle(article: HTMLElement): ImageMetadata {
   const statusLink = findStatusLink(article);
-  const postId = statusLink?.match(/\/status\/(\d+)/)?.[1] || 'unknown';
-  const creator = statusLink?.match(/^\/([^/]+)\/status\//)?.[1] || extractCreatorFromArticle(article);
+  const fallbackStatusLink = getStatusPathFromLocation();
+  const statusPath = statusLink || fallbackStatusLink;
+  const postId = statusPath?.match(/\/status\/(\d+)/)?.[1] || 'unknown';
+  const creator = statusPath?.match(/^\/([^/]+)\/status\//)?.[1] || extractCreatorFromArticle(article);
   const timeEl = article.querySelector<HTMLTimeElement>('time[datetime]');
   const datetime = timeEl?.getAttribute('datetime');
   const postDate = parseValidDate(datetime) || getDateFromTweetId(postId);
@@ -462,6 +539,10 @@ function findStatusLink(article: HTMLElement): string | null {
   } catch {
     return statusLink.getAttribute('href');
   }
+}
+
+function getStatusPathFromLocation(): string | null {
+  return /^\/[^/]+\/status\/\d+/.test(location.pathname) ? location.pathname : null;
 }
 
 function extractCreatorFromArticle(article: HTMLElement): string {
@@ -680,6 +761,15 @@ function injectStyle(): void {
       pointer-events: auto;
     }
 
+    .picpick-x-viewer-slot {
+      position: fixed;
+      top: 14px;
+      right: 70px;
+      z-index: 2147483647;
+      width: 44px;
+      height: 44px;
+    }
+
     .picpick-x-inline-button {
       appearance: none;
       border: 0;
@@ -699,6 +789,19 @@ function injectStyle(): void {
       touch-action: manipulation;
       overflow: hidden;
       transition: background-color 0.15s, color 0.15s;
+    }
+
+    .picpick-x-viewer-button {
+      width: 44px;
+      height: 44px;
+      background: rgba(15, 20, 25, 0.72);
+      color: #fff;
+      backdrop-filter: blur(8px);
+    }
+
+    .picpick-x-viewer-button:hover {
+      background-color: rgba(29, 155, 240, 0.88);
+      color: #fff;
     }
 
     .picpick-x-inline-button svg,
@@ -732,6 +835,12 @@ function injectStyle(): void {
       width: 18.75px;
       height: 18.75px;
       fill: currentColor;
+    }
+
+    .picpick-x-viewer-button svg:not(.picpick-x-ring),
+    .picpick-x-viewer-button .picpick-x-ring {
+      width: 21px;
+      height: 21px;
     }
 
     /* ---- 円形プログレスリング ---- */
