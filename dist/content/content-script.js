@@ -4123,6 +4123,7 @@ let cachedDownloadSettings = null;
 let pendingSettingsRequest = null;
 const activeDownloadKeys = new Set();
 const articleStateMap = new Map();
+let activePhotoViewer = null;
 async function initXInlineSave() {
     if (!isXHost(location.hostname))
         return;
@@ -4173,33 +4174,34 @@ function scanArticles() {
 }
 function scanPhotoViewer() {
     const viewer = findPhotoViewer();
-    if (!viewer)
-        return;
-    if (viewer.getAttribute(VIEWER_PROCESSED_ATTR) === 'true') {
-        if (!viewer.querySelector('.picpick-x-viewer-button')) {
-            addViewerSaveButton(viewer);
-        }
-        else {
-            updateButtonStateForArticle(viewer, '.picpick-x-viewer-button');
-        }
+    if (!viewer) {
+        activePhotoViewer = null;
+        document.body.querySelector('.picpick-x-viewer-slot')?.remove();
         return;
     }
     const images = extractImagesFromArticle(viewer);
     if (images.length === 0)
         return;
+    const button = document.body.querySelector('.picpick-x-viewer-button');
+    if (viewer === activePhotoViewer && button) {
+        updateButtonStateForArticle(viewer, '.picpick-x-viewer-button');
+        return;
+    }
+    document.body.querySelector('.picpick-x-viewer-slot')?.remove();
+    activePhotoViewer = viewer;
     viewer.setAttribute(VIEWER_PROCESSED_ATTR, 'true');
     addViewerSaveButton(viewer);
 }
 function findPhotoViewer() {
     const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'));
-    const dialog = dialogs.reverse().find((candidate) => candidate.querySelector('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"]'));
+    const dialog = dialogs.reverse().find((candidate) => candidate.querySelector('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"], [style*="pbs.twimg.com/media"], a[href*="/photo/"]'));
     if (dialog)
         return dialog;
     if (!/\/status\/\d+\/photo\//.test(location.pathname))
         return null;
-    const visibleMedia = Array.from(document.querySelectorAll('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"]'))
-        .find((img) => {
-        const rect = img.getBoundingClientRect();
+    const visibleMedia = Array.from(document.querySelectorAll('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"], [style*="pbs.twimg.com/media"]'))
+        .find((media) => {
+        const rect = media.getBoundingClientRect();
         return rect.width >= 200 && rect.height >= 200;
     });
     return visibleMedia?.closest('div') || null;
@@ -4246,7 +4248,7 @@ function addSaveButton(article, actionBar) {
     restoreButtonState(article, button);
 }
 function addViewerSaveButton(viewer) {
-    const existing = viewer.querySelector('.picpick-x-viewer-button');
+    const existing = document.body.querySelector('.picpick-x-viewer-button');
     if (existing) {
         restoreButtonState(viewer, existing);
         return;
@@ -4274,7 +4276,9 @@ function addViewerSaveButton(viewer) {
         event.preventDefault();
         event.stopPropagation();
     });
-    viewer.appendChild(wrapper);
+    // X のダイアログ内は transform / overflow によって fixed 要素が隠れることがあるため、
+    // ボタンは body 直下に置いて常にビューポート最前面へ表示する。
+    document.body.appendChild(wrapper);
     wrapper.appendChild(button);
     restoreButtonState(viewer, button);
 }
@@ -4346,7 +4350,9 @@ async function handleInlineDownload(article, button) {
     }
 }
 function updateButtonStateForArticle(article, buttonSelector = '.picpick-x-inline-button') {
-    const button = article.querySelector(buttonSelector);
+    const button = buttonSelector === '.picpick-x-viewer-button'
+        ? document.body.querySelector(buttonSelector)
+        : article.querySelector(buttonSelector);
     if (!button || button.dataset.state === 'loading')
         return;
     const images = extractImagesFromArticle(article);

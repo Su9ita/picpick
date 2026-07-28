@@ -19,6 +19,7 @@ let cachedDownloadSettings: { settings: Settings; expiresAt: number } | null = n
 let pendingSettingsRequest: Promise<Settings> | null = null;
 const activeDownloadKeys = new Set<string>();
 const articleStateMap = new Map<string, { state: ButtonState; count?: number }>();
+let activePhotoViewer: HTMLElement | null = null;
 
 type ButtonState = 'ready' | 'loading' | 'saved' | 'error';
 
@@ -77,33 +78,40 @@ function scanArticles(): void {
 
 function scanPhotoViewer(): void {
   const viewer = findPhotoViewer();
-  if (!viewer) return;
-
-  if (viewer.getAttribute(VIEWER_PROCESSED_ATTR) === 'true') {
-    if (!viewer.querySelector('.picpick-x-viewer-button')) {
-      addViewerSaveButton(viewer);
-    } else {
-      updateButtonStateForArticle(viewer, '.picpick-x-viewer-button');
-    }
+  if (!viewer) {
+    activePhotoViewer = null;
+    document.body.querySelector('.picpick-x-viewer-slot')?.remove();
     return;
   }
 
   const images = extractImagesFromArticle(viewer);
   if (images.length === 0) return;
 
+  const button = document.body.querySelector<HTMLButtonElement>('.picpick-x-viewer-button');
+  if (viewer === activePhotoViewer && button) {
+    updateButtonStateForArticle(viewer, '.picpick-x-viewer-button');
+    return;
+  }
+
+  document.body.querySelector('.picpick-x-viewer-slot')?.remove();
+  activePhotoViewer = viewer;
   viewer.setAttribute(VIEWER_PROCESSED_ATTR, 'true');
   addViewerSaveButton(viewer);
 }
 
 function findPhotoViewer(): HTMLElement | null {
   const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"]'));
-  const dialog = dialogs.reverse().find((candidate) => candidate.querySelector('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"]'));
+  const dialog = dialogs.reverse().find((candidate) => candidate.querySelector(
+    'img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"], [style*="pbs.twimg.com/media"], a[href*="/photo/"]'
+  ));
   if (dialog) return dialog;
 
   if (!/\/status\/\d+\/photo\//.test(location.pathname)) return null;
-  const visibleMedia = Array.from(document.querySelectorAll<HTMLImageElement>('img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"]'))
-    .find((img) => {
-      const rect = img.getBoundingClientRect();
+  const visibleMedia = Array.from(document.querySelectorAll<HTMLElement>(
+    'img[src*="pbs.twimg.com/media"], img[srcset*="pbs.twimg.com/media"], [style*="pbs.twimg.com/media"]'
+  ))
+    .find((media) => {
+      const rect = media.getBoundingClientRect();
       return rect.width >= 200 && rect.height >= 200;
     });
   return visibleMedia?.closest<HTMLElement>('div') || null;
@@ -157,7 +165,7 @@ function addSaveButton(article: HTMLElement, actionBar: HTMLElement): void {
 }
 
 function addViewerSaveButton(viewer: HTMLElement): void {
-  const existing = viewer.querySelector<HTMLButtonElement>('.picpick-x-viewer-button');
+  const existing = document.body.querySelector<HTMLButtonElement>('.picpick-x-viewer-button');
   if (existing) {
     restoreButtonState(viewer, existing);
     return;
@@ -189,7 +197,9 @@ function addViewerSaveButton(viewer: HTMLElement): void {
     event.stopPropagation();
   });
 
-  viewer.appendChild(wrapper);
+  // X のダイアログ内は transform / overflow によって fixed 要素が隠れることがあるため、
+  // ボタンは body 直下に置いて常にビューポート最前面へ表示する。
+  document.body.appendChild(wrapper);
   wrapper.appendChild(button);
   restoreButtonState(viewer, button);
 }
@@ -268,7 +278,9 @@ async function handleInlineDownload(article: HTMLElement, button: HTMLButtonElem
 }
 
 function updateButtonStateForArticle(article: HTMLElement, buttonSelector = '.picpick-x-inline-button'): void {
-  const button = article.querySelector<HTMLButtonElement>(buttonSelector);
+  const button = buttonSelector === '.picpick-x-viewer-button'
+    ? document.body.querySelector<HTMLButtonElement>(buttonSelector)
+    : article.querySelector<HTMLButtonElement>(buttonSelector);
   if (!button || button.dataset.state === 'loading') return;
 
   const images = extractImagesFromArticle(article);
