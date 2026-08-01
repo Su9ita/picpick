@@ -2484,8 +2484,21 @@ function sanitizeFilename(filename) {
         .slice(0, 200);
 }
 
+;// ./src/content/icon-ghost.ts
+let iconGhosted = false;
+function applyIconGhostState() {
+    document.getElementById('picpick-btn')?.classList.toggle('picpick-ghosted', iconGhosted);
+    document.getElementById('picpick-batch-btn')?.classList.toggle('pb-ghosted', iconGhosted);
+    document.getElementById('picpick-patreon-batch-btn')?.classList.toggle('pb-ghosted', iconGhosted);
+}
+function toggleIconGhostState() {
+    iconGhosted = !iconGhosted;
+    applyIconGhostState();
+}
+
 ;// ./src/content/overlay.ts
 // オーバーレイUIを作成・管理
+
 
 
 
@@ -2552,6 +2565,13 @@ function createOverlay() {
         transition: all 0.2s ease;
         touch-action: none;
         user-select: none;
+      }
+      #picpick-btn.picpick-ghosted {
+        opacity: 0.14;
+        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.18);
+      }
+      #picpick-btn.picpick-ghosted:hover {
+        opacity: 0.24;
       }
       #picpick-btn.picpick-dragging {
         cursor: grabbing;
@@ -3119,7 +3139,20 @@ function createOverlay() {
     restoreOverlayPosition();
     const btn = document.getElementById('picpick-btn');
     if (btn) {
+        applyIconGhostState();
         setupDraggableOverlay(btn);
+        btn.addEventListener('mousedown', (event) => {
+            if (event.button === 1) {
+                event.preventDefault();
+            }
+        });
+        btn.addEventListener('auxclick', (event) => {
+            if (event.button !== 1)
+                return;
+            event.preventDefault();
+            event.stopPropagation();
+            toggleIconGhostState();
+        });
         btn.addEventListener('click', (event) => {
             if (suppressNextOverlayClick) {
                 event.preventDefault();
@@ -5134,6 +5167,7 @@ async function getSavedCount(creatorId) {
 
 
 
+
 let panelEl = null;
 let isRunning = false;
 let abortRequested = false;
@@ -5165,6 +5199,8 @@ function injectButton() {
         transition: transform .2s ease, box-shadow .2s ease, opacity .2s ease;
       }
       #picpick-batch-btn:hover { transform: scale(1.08); }
+      #picpick-batch-btn.pb-ghosted { opacity: .28; }
+      #picpick-batch-btn.pb-ghosted:hover { opacity: .45; }
       #picpick-batch-btn svg { width: 22px; height: 22px; fill: #fff; }
       #picpick-batch-panel {
         position: absolute; top: 52px; left: 0;
@@ -5277,7 +5313,20 @@ function injectButton() {
     document.body.appendChild(root);
     panelEl = root.querySelector('#picpick-batch-panel');
     const btn = root.querySelector('#picpick-batch-btn');
+    applyIconGhostState();
     btn?.addEventListener('click', togglePanel);
+    btn?.addEventListener('mousedown', (event) => {
+        if (event.button === 1) {
+            event.preventDefault();
+        }
+    });
+    btn?.addEventListener('auxclick', (event) => {
+        if (event.button !== 1)
+            return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleIconGhostState();
+    });
     root.querySelector('#pb-go')?.addEventListener('click', () => void runBatch());
     root.querySelector('#pb-stop')?.addEventListener('click', () => {
         abortRequested = true;
@@ -6122,6 +6171,7 @@ function patreon_crawler_sleep(ms) {
 
 
 
+
 let patreon_batch_panelEl = null;
 let patreon_batch_isRunning = false;
 let patreon_batch_abortRequested = false;
@@ -6152,6 +6202,8 @@ function patreon_batch_injectButton() {
         transition: transform .2s ease, box-shadow .2s ease, opacity .2s ease;
       }
       #picpick-patreon-batch-btn:hover { transform: scale(1.08); }
+      #picpick-patreon-batch-btn.pb-ghosted { opacity: .28; }
+      #picpick-patreon-batch-btn.pb-ghosted:hover { opacity: .45; }
       #picpick-patreon-batch-btn svg { width: 22px; height: 22px; fill: #fff; }
       #picpick-patreon-batch-panel {
         position: absolute; top: 52px; left: 0;
@@ -6265,7 +6317,19 @@ function patreon_batch_injectButton() {
     document.body.appendChild(root);
     patreon_batch_panelEl = root.querySelector('#picpick-patreon-batch-panel');
     const btn = root.querySelector('#picpick-patreon-batch-btn');
+    applyIconGhostState();
     btn?.addEventListener('click', patreon_batch_togglePanel);
+    btn?.addEventListener('mousedown', (event) => {
+        if (event.button === 1)
+            event.preventDefault();
+    });
+    btn?.addEventListener('auxclick', (event) => {
+        if (event.button !== 1)
+            return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleIconGhostState();
+    });
     root.querySelector('#ppb-go')?.addEventListener('click', () => void patreon_batch_runBatch());
     root.querySelector('#ppb-stop')?.addEventListener('click', () => {
         patreon_batch_abortRequested = true;
