@@ -6,6 +6,7 @@ import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../
 import { ImageInfo } from '../types/image-info';
 import { getDefaultDownloadFolderLabel, getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 import { generateFilename, applyDatePolicyToTemplate } from '../utils/filename-template';
+import { restoreOverlayPositionInViewport } from '../utils/overlay-position';
 import { applyIconGhostState, toggleIconGhostState } from './icon-ghost';
 
 let overlayContainer: HTMLDivElement | null = null;
@@ -13,9 +14,6 @@ let isDownloading = false;
 let scannedImages: ImageInfo[] = [];
 let currentSettings: Settings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
-let overlayBodyObserver: MutationObserver | null = null;
-let overlayDocumentObserver: MutationObserver | null = null;
-let observedOverlayBody: HTMLElement | null = null;
 
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
@@ -48,10 +46,7 @@ export async function initOverlay(): Promise<void> {
 }
 
 function createOverlay(): void {
-  if (overlayContainer) {
-    ensureOverlayAttached();
-    return;
-  }
+  if (overlayContainer) return;
 
   overlayContainer = document.createElement('div');
   overlayContainer.id = 'picpick-overlay';
@@ -650,7 +645,6 @@ function createOverlay(): void {
   `;
 
   document.body.appendChild(overlayContainer);
-  observeOverlayPresence();
   restoreOverlayPosition();
 
   const btn = document.getElementById('picpick-btn');
@@ -751,33 +745,6 @@ function createOverlay(): void {
     updateOverlayFilenamePreview();
   });
 
-}
-
-function ensureOverlayAttached(): void {
-  if (!overlayContainer || overlayContainer.isConnected || !document.body) return;
-
-  document.body.appendChild(overlayContainer);
-  observeOverlayPresence();
-}
-
-function observeOverlayPresence(): void {
-  if (!document.body) return;
-
-  if (!overlayDocumentObserver) {
-    overlayDocumentObserver = new MutationObserver(() => {
-      ensureOverlayAttached();
-    });
-    overlayDocumentObserver.observe(document.documentElement, { childList: true });
-  }
-
-  if (observedOverlayBody !== document.body) {
-    overlayBodyObserver?.disconnect();
-    observedOverlayBody = document.body;
-    overlayBodyObserver = new MutationObserver(() => {
-      ensureOverlayAttached();
-    });
-    overlayBodyObserver.observe(document.body, { childList: true });
-  }
 }
 
 // スキャンボタンクリック（確認ダイアログを表示）
@@ -941,18 +908,16 @@ function restoreOverlayPosition(): void {
 
   try {
     chrome.storage.sync.get(OVERLAY_POSITION_KEY, (result) => {
-      const position = result?.[OVERLAY_POSITION_KEY];
-      if (!position || typeof position.top !== 'number') return;
+      if (!overlayContainer) return;
 
-      if (typeof position.fromRight === 'number' && overlayContainer) {
-        // 新フォーマット: 右端からの距離で復元（ウィンドウサイズ変化に追従）
-        overlayContainer.style.right = `${position.fromRight}px`;
-        overlayContainer.style.top = `${position.top}px`;
-        overlayContainer.style.left = 'auto';
-      } else if (typeof position.left === 'number') {
-        // 旧フォーマット: 互換性のため一度だけ変換して適用
-        applyOverlayPosition(position.left, position.top);
-      }
+      const position = restoreOverlayPositionInViewport(
+        result?.[OVERLAY_POSITION_KEY],
+        window.innerWidth,
+        window.innerHeight,
+        overlayContainer.offsetWidth || 44,
+        overlayContainer.offsetHeight || 44
+      );
+      if (position) applyOverlayPosition(position.left, position.top);
     });
   } catch {
     // 位置の復元に失敗した場合はデフォルト位置を使う
@@ -1633,7 +1598,6 @@ function showOverlay(): void {
   if (!overlayContainer) {
     createOverlay();
   } else {
-    ensureOverlayAttached();
     overlayContainer.style.display = 'block';
   }
 }

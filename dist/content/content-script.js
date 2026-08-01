@@ -2484,6 +2484,31 @@ function sanitizeFilename(filename) {
         .slice(0, 200);
 }
 
+;// ./src/utils/overlay-position.ts
+function restoreOverlayPositionInViewport(savedPosition, viewportWidth, viewportHeight, overlayWidth, overlayHeight, margin = 8) {
+    if (!savedPosition || typeof savedPosition !== 'object')
+        return null;
+    const saved = savedPosition;
+    if (typeof saved.top !== 'number' || !Number.isFinite(saved.top))
+        return null;
+    let left;
+    if (typeof saved.fromRight === 'number' && Number.isFinite(saved.fromRight)) {
+        left = viewportWidth - saved.fromRight - overlayWidth;
+    }
+    else if (typeof saved.left === 'number' && Number.isFinite(saved.left)) {
+        left = saved.left;
+    }
+    else {
+        return null;
+    }
+    const maxLeft = Math.max(margin, viewportWidth - overlayWidth - margin);
+    const maxTop = Math.max(margin, viewportHeight - overlayHeight - margin);
+    return {
+        left: Math.min(Math.max(left, margin), maxLeft),
+        top: Math.min(Math.max(saved.top, margin), maxTop),
+    };
+}
+
 ;// ./src/content/icon-ghost.ts
 let iconGhosted = false;
 function applyIconGhostState() {
@@ -2505,14 +2530,12 @@ function toggleIconGhostState() {
 
 
 
+
 let overlayContainer = null;
 let isDownloading = false;
 let scannedImages = [];
 let currentSettings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
-let overlayBodyObserver = null;
-let overlayDocumentObserver = null;
-let observedOverlayBody = null;
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
 function getRuleIdForCurrentPage(url) {
@@ -2541,10 +2564,8 @@ async function initOverlay() {
     setupOverlayToggleListener();
 }
 function createOverlay() {
-    if (overlayContainer) {
-        ensureOverlayAttached();
+    if (overlayContainer)
         return;
-    }
     overlayContainer = document.createElement('div');
     overlayContainer.id = 'picpick-overlay';
     overlayContainer.innerHTML = `
@@ -3141,7 +3162,6 @@ function createOverlay() {
     </div>
   `;
     document.body.appendChild(overlayContainer);
-    observeOverlayPresence();
     restoreOverlayPosition();
     const btn = document.getElementById('picpick-btn');
     if (btn) {
@@ -3232,30 +3252,6 @@ function createOverlay() {
         updateFilenamePresetDropdown(false);
         updateOverlayFilenamePreview();
     });
-}
-function ensureOverlayAttached() {
-    if (!overlayContainer || overlayContainer.isConnected || !document.body)
-        return;
-    document.body.appendChild(overlayContainer);
-    observeOverlayPresence();
-}
-function observeOverlayPresence() {
-    if (!document.body)
-        return;
-    if (!overlayDocumentObserver) {
-        overlayDocumentObserver = new MutationObserver(() => {
-            ensureOverlayAttached();
-        });
-        overlayDocumentObserver.observe(document.documentElement, { childList: true });
-    }
-    if (observedOverlayBody !== document.body) {
-        overlayBodyObserver?.disconnect();
-        observedOverlayBody = document.body;
-        overlayBodyObserver = new MutationObserver(() => {
-            ensureOverlayAttached();
-        });
-        overlayBodyObserver.observe(document.body, { childList: true });
-    }
 }
 // スキャンボタンクリック（確認ダイアログを表示）
 async function handleScanClick() {
@@ -3402,19 +3398,11 @@ function restoreOverlayPosition() {
         return;
     try {
         chrome.storage.sync.get(OVERLAY_POSITION_KEY, (result) => {
-            const position = result?.[OVERLAY_POSITION_KEY];
-            if (!position || typeof position.top !== 'number')
+            if (!overlayContainer)
                 return;
-            if (typeof position.fromRight === 'number' && overlayContainer) {
-                // 新フォーマット: 右端からの距離で復元（ウィンドウサイズ変化に追従）
-                overlayContainer.style.right = `${position.fromRight}px`;
-                overlayContainer.style.top = `${position.top}px`;
-                overlayContainer.style.left = 'auto';
-            }
-            else if (typeof position.left === 'number') {
-                // 旧フォーマット: 互換性のため一度だけ変換して適用
+            const position = restoreOverlayPositionInViewport(result?.[OVERLAY_POSITION_KEY], window.innerWidth, window.innerHeight, overlayContainer.offsetWidth || 44, overlayContainer.offsetHeight || 44);
+            if (position)
                 applyOverlayPosition(position.left, position.top);
-            }
         });
     }
     catch {
@@ -4037,7 +4025,6 @@ function showOverlay() {
         createOverlay();
     }
     else {
-        ensureOverlayAttached();
         overlayContainer.style.display = 'block';
     }
 }
