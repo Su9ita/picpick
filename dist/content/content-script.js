@@ -2510,6 +2510,9 @@ let isDownloading = false;
 let scannedImages = [];
 let currentSettings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
+let overlayBodyObserver = null;
+let overlayDocumentObserver = null;
+let observedOverlayBody = null;
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
 function getRuleIdForCurrentPage(url) {
@@ -2538,8 +2541,10 @@ async function initOverlay() {
     setupOverlayToggleListener();
 }
 function createOverlay() {
-    if (overlayContainer)
+    if (overlayContainer) {
+        ensureOverlayAttached();
         return;
+    }
     overlayContainer = document.createElement('div');
     overlayContainer.id = 'picpick-overlay';
     overlayContainer.innerHTML = `
@@ -3136,6 +3141,7 @@ function createOverlay() {
     </div>
   `;
     document.body.appendChild(overlayContainer);
+    observeOverlayPresence();
     restoreOverlayPosition();
     const btn = document.getElementById('picpick-btn');
     if (btn) {
@@ -3226,6 +3232,30 @@ function createOverlay() {
         updateFilenamePresetDropdown(false);
         updateOverlayFilenamePreview();
     });
+}
+function ensureOverlayAttached() {
+    if (!overlayContainer || overlayContainer.isConnected || !document.body)
+        return;
+    document.body.appendChild(overlayContainer);
+    observeOverlayPresence();
+}
+function observeOverlayPresence() {
+    if (!document.body)
+        return;
+    if (!overlayDocumentObserver) {
+        overlayDocumentObserver = new MutationObserver(() => {
+            ensureOverlayAttached();
+        });
+        overlayDocumentObserver.observe(document.documentElement, { childList: true });
+    }
+    if (observedOverlayBody !== document.body) {
+        overlayBodyObserver?.disconnect();
+        observedOverlayBody = document.body;
+        overlayBodyObserver = new MutationObserver(() => {
+            ensureOverlayAttached();
+        });
+        overlayBodyObserver.observe(document.body, { childList: true });
+    }
 }
 // スキャンボタンクリック（確認ダイアログを表示）
 async function handleScanClick() {
@@ -4007,6 +4037,7 @@ function showOverlay() {
         createOverlay();
     }
     else {
+        ensureOverlayAttached();
         overlayContainer.style.display = 'block';
     }
 }
