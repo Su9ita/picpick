@@ -6,7 +6,6 @@ import { Settings, DEFAULT_SETTINGS, SizePreset, RuleSessionSettings } from '../
 import { ImageInfo } from '../types/image-info';
 import { getDefaultDownloadFolderLabel, getRuleFilenamePresets, getSelectedFilenamePreset, normalizeSettings } from '../utils/settings-normalizer';
 import { generateFilename, applyDatePolicyToTemplate } from '../utils/filename-template';
-import { applyIconGhostState, toggleIconGhostState } from './icon-ghost';
 
 let overlayContainer: HTMLDivElement | null = null;
 let isDownloading = false;
@@ -72,13 +71,6 @@ function createOverlay(): void {
         transition: all 0.2s ease;
         touch-action: none;
         user-select: none;
-      }
-      #picpick-btn.picpick-ghosted {
-        opacity: 0.14;
-        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.18);
-      }
-      #picpick-btn.picpick-ghosted:hover {
-        opacity: 0.24;
       }
       #picpick-btn.picpick-dragging {
         cursor: grabbing;
@@ -648,19 +640,7 @@ function createOverlay(): void {
 
   const btn = document.getElementById('picpick-btn');
   if (btn) {
-    applyIconGhostState();
     setupDraggableOverlay(btn);
-    btn.addEventListener('mousedown', (event) => {
-      if (event.button === 1) {
-        event.preventDefault();
-      }
-    });
-    btn.addEventListener('auxclick', (event) => {
-      if (event.button !== 1) return;
-      event.preventDefault();
-      event.stopPropagation();
-      toggleIconGhostState();
-    });
     btn.addEventListener('click', (event) => {
       if (suppressNextOverlayClick) {
         event.preventDefault();

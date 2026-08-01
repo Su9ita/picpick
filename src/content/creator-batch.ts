@@ -30,7 +30,6 @@ import {
 } from '../crawlers/fanbox-crawler';
 import { getSavedImageIds, markImagesSaved } from '../utils/saved-index';
 import { filterImages, filterNearDuplicateImages } from '../utils/image-filter';
-import { applyIconGhostState, toggleIconGhostState } from './icon-ghost';
 
 let panelEl: HTMLDivElement | null = null;
 let isRunning = false;
@@ -63,8 +62,6 @@ function injectButton(): void {
         transition: transform .2s ease, box-shadow .2s ease, opacity .2s ease;
       }
       #picpick-batch-btn:hover { transform: scale(1.08); }
-      #picpick-batch-btn.pb-ghosted { opacity: .28; }
-      #picpick-batch-btn.pb-ghosted:hover { opacity: .45; }
       #picpick-batch-btn svg { width: 22px; height: 22px; fill: #fff; }
       #picpick-batch-panel {
         position: absolute; top: 52px; left: 0;
@@ -178,19 +175,7 @@ function injectButton(): void {
   panelEl = root.querySelector('#picpick-batch-panel');
 
   const btn = root.querySelector('#picpick-batch-btn') as HTMLButtonElement;
-  applyIconGhostState();
   btn?.addEventListener('click', togglePanel);
-  btn?.addEventListener('mousedown', (event) => {
-    if (event.button === 1) {
-      event.preventDefault();
-    }
-  });
-  btn?.addEventListener('auxclick', (event) => {
-    if (event.button !== 1) return;
-    event.preventDefault();
-    event.stopPropagation();
-    toggleIconGhostState();
-  });
   (root.querySelector('#pb-go') as HTMLButtonElement)?.addEventListener('click', () => void runBatch());
   (root.querySelector('#pb-stop') as HTMLButtonElement)?.addEventListener('click', () => {
     abortRequested = true;
