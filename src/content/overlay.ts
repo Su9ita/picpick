@@ -13,6 +13,9 @@ let isDownloading = false;
 let scannedImages: ImageInfo[] = [];
 let currentSettings: Settings = { ...DEFAULT_SETTINGS };
 let suppressNextOverlayClick = false;
+let overlayBodyObserver: MutationObserver | null = null;
+let overlayDocumentObserver: MutationObserver | null = null;
+let observedOverlayBody: HTMLElement | null = null;
 
 const OVERLAY_POSITION_KEY = 'picpickOverlayPosition';
 const RULE_TAB_ORDER = ['x', 'patreon', 'pixiv_fanbox', 'generic'];
@@ -45,7 +48,10 @@ export async function initOverlay(): Promise<void> {
 }
 
 function createOverlay(): void {
-  if (overlayContainer) return;
+  if (overlayContainer) {
+    ensureOverlayAttached();
+    return;
+  }
 
   overlayContainer = document.createElement('div');
   overlayContainer.id = 'picpick-overlay';
@@ -644,6 +650,7 @@ function createOverlay(): void {
   `;
 
   document.body.appendChild(overlayContainer);
+  observeOverlayPresence();
   restoreOverlayPosition();
 
   const btn = document.getElementById('picpick-btn');
@@ -744,6 +751,33 @@ function createOverlay(): void {
     updateOverlayFilenamePreview();
   });
 
+}
+
+function ensureOverlayAttached(): void {
+  if (!overlayContainer || overlayContainer.isConnected || !document.body) return;
+
+  document.body.appendChild(overlayContainer);
+  observeOverlayPresence();
+}
+
+function observeOverlayPresence(): void {
+  if (!document.body) return;
+
+  if (!overlayDocumentObserver) {
+    overlayDocumentObserver = new MutationObserver(() => {
+      ensureOverlayAttached();
+    });
+    overlayDocumentObserver.observe(document.documentElement, { childList: true });
+  }
+
+  if (observedOverlayBody !== document.body) {
+    overlayBodyObserver?.disconnect();
+    observedOverlayBody = document.body;
+    overlayBodyObserver = new MutationObserver(() => {
+      ensureOverlayAttached();
+    });
+    overlayBodyObserver.observe(document.body, { childList: true });
+  }
 }
 
 // スキャンボタンクリック（確認ダイアログを表示）
@@ -1599,6 +1633,7 @@ function showOverlay(): void {
   if (!overlayContainer) {
     createOverlay();
   } else {
+    ensureOverlayAttached();
     overlayContainer.style.display = 'block';
   }
 }
